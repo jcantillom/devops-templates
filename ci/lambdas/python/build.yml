@@ -217,7 +217,7 @@ stages:
 
           # API Gateway (opcional, desactivado por defecto)
           - task: AWSShellScript@1
-            displayName: "Integrar con API Gateway"
+            displayName: "Integrar con API Gateway (idempotente)"
             condition: and(succeeded(), eq('${{ parameters.enable_apigw }}', true))
             inputs:
               awsCredentials: "$(AWS_SVC)"
@@ -231,10 +231,12 @@ stages:
                 ACCOUNT_ID="$(ID_CUENTA)"
                 FUNCTION_NAME="$(FUNCIONALIDAD)-$(env)"
                 STAGE_NAME="$(env)"
-                FUNCTION_QUALIFIER=""
+                FUNCTION_QUALIFIER=""   # ej: ":prod" si usas alias
 
                 echo "==> Asegurar REST API: ${API_NAME}"
-                API_ID=$(aws apigateway get-rest-apis --query "items[?name=='${API_NAME}'].id | [0]" --output text 2>/dev/null || echo "None")
+                API_ID=$(aws apigateway get-rest-apis \
+                  --query "items[?name=='${API_NAME}'].id | [0]" \
+                  --output text 2>/dev/null || echo "None")
                 if [ -z "${API_ID}" ] || [ "${API_ID}" = "None" ]; then
                   API_ID=$(aws apigateway create-rest-api --name "${API_NAME}" --query "id" --output text)
                   echo "Creada API: ${API_ID}"
@@ -242,11 +244,22 @@ stages:
                   echo "Usando API existente: ${API_ID}"
                 fi
 
-                ROOT_ID=$(aws apigateway get-resources --rest-api-id "${API_ID}" --query "items[?path=='/'].id | [0]" --output text)
+                echo "==> Obtener root resource id"
+                ROOT_ID=$(aws apigateway get-resources --rest-api-id "${API_ID}" \
+                  --query "items[?path=='/'].id | [0]" --output text)
 
-                PROXY_ID=$(aws apigateway get-resources --rest-api-id "${API_ID}" --query "items[?pathPart=='{proxy+}'].id | [0]" --output text 2>/dev/null || echo "None")
+                echo "==> Asegurar recurso {proxy+}"
+                PROXY_ID=$(aws apigateway get-resources --rest-api-id "${API_ID}" \
+                  --query "items[?pathPart=='{proxy+}'].id | [0]" --output text 2>/dev/null || echo "None")
                 if [ -z "${PROXY_ID}" ] || [ "${PROXY_ID}" = "None" ]; then
-                  PROXY_ID=$(aws apigateway create-resource --rest-api-id "${API_ID}" --parent-id "${ROOT_ID}" --path-part "{proxy+}" --query "id" --output text)
+                  PROXY_ID=$(aws apigateway create-resource \
+                    --rest-api-id "${API_ID}" \
+                    --parent-id "${ROOT_ID}" \
+                    --path-part "{proxy+}" \
+                    --query "id" --output text)
+                  echo "Recurso creado: {proxy+} (${PROXY_ID})"
+                else
+                  echo "Recurso existente: {proxy+} (${PROXY_ID})"
                 fi
 
                 ensure_any_proxy () {
@@ -255,24 +268,62 @@ stages:
                   local LAMBDA_ARN="arn:aws:lambda:${REGION}:${ACCOUNT_ID}:function:${FUNCTION_NAME}${FUNCTION_QUALIFIER}"
                   local INT_URI="arn:aws:apigateway:${REGION}:lambda:path/2015-03-31/functions/${LAMBDA_ARN}/invocations"
 
+                  # Método ANY con auth NONE y apiKeyRequired=false (idempotente)
                   if ! aws apigateway get-method --rest-api-id "${API_ID}" --resource-id "${RID}" --http-method "ANY" >/dev/null 2>&1; then
                     if [ "${IS_PROXY}" = "true" ]; then
-                      aws apigateway put-method --rest-api-id "${API_ID}" --resource-id "${RID}" --http-method "ANY" --authorization-type "NONE" --request-parameters "method.request.path.proxy=true" >/dev/null
+                      aws apigateway put-method \
+                        --rest-api-id "${API_ID}" \
+                        --resource-id "${RID}" \
+                        --http-method "ANY" \
+                        --authorization-type "NONE" \
+                        --api-key-required false \
+                        --request-parameters "method.request.path.proxy=true" >/dev/null
                     else
-                      aws apigateway put-method --rest-api-id "${API_ID}" --resource-id "${RID}" --http-method "ANY" --authorization-type "NONE" >/dev/null
+                      aws apigateway put-method \
+                        --rest-api-id "${API_ID}" \
+                        --resource-id "${RID}" \
+                        --http-method "ANY" \
+                        --authorization-type "NONE" \
+                        --api-key-required false >/dev/null
                     fi
+                  else
+                    # Forzar a NONE y apiKeyRequired=false si venía de antes
+                    aws apigateway update-method \
+                      --rest-api-id "${API_ID}" \
+                      --resource-id "${RID}" \
+                      --http-method "ANY" \
+                      --patch-operations op=replace,path=/authorizationType,value=NONE \
+                                         op=replace,path=/apiKeyRequired,value=false >/dev/null
                   fi
 
+                  # Integración AWS_PROXY (idempotente)
                   if [ "${IS_PROXY}" = "true" ]; then
-                    aws apigateway put-integration --rest-api-id "${API_ID}" --resource-id "${RID}" --http-method "ANY" --type "AWS_PROXY" --integration-http-method "POST" --uri "${INT_URI}" --request-parameters "integration.request.path.proxy=method.request.path.proxy" >/dev/null
+                    aws apigateway put-integration \
+                      --rest-api-id "${API_ID}" \
+                      --resource-id "${RID}" \
+                      --http-method "ANY" \
+                      --type "AWS_PROXY" \
+                      --integration-http-method "POST" \
+                      --uri "${INT_URI}" \
+                      --request-parameters "integration.request.path.proxy=method.request.path.proxy" >/dev/null
                   else
-                    aws apigateway put-integration --rest-api-id "${API_ID}" --resource-id "${RID}" --http-method "ANY" --type "AWS_PROXY" --integration-http-method "POST" --uri "${INT_URI}" >/dev/null
+                    aws apigateway put-integration \
+                      --rest-api-id "${API_ID}" \
+                      --resource-id "${RID}" \
+                      --http-method "ANY" \
+                      --type "AWS_PROXY" \
+                      --integration-http-method "POST" \
+                      --uri "${INT_URI}" >/dev/null
                   fi
                 }
 
+                echo "==> Asegurar ANY en '/'"
                 ensure_any_proxy "${ROOT_ID}" "false"
+
+                echo "==> Asegurar ANY en '/{proxy+}'"
                 ensure_any_proxy "${PROXY_ID}" "true"
 
+                echo "==> Permiso lambda:InvokeFunction (idempotente)"
                 SID="apigw-invoke-$(date +%s)"
                 set +e
                 aws lambda add-permission \
@@ -284,16 +335,31 @@ stages:
                   --region "${REGION}" >/dev/null 2>&1
                 set -e
 
-                aws apigateway create-deployment --rest-api-id "${API_ID}" --stage-name "${STAGE_NAME}" >/dev/null || true
+                # (OPCIONAL) Si sospechas que hay una resource policy que bloquea, puedes limpiarla:
+                # OJO: actívalo sólo si sabes que no usas policy/WAF/condiciones de seguridad en ese API.
+                if [ "${RESET_API_POLICY:-false}" = "true" ]; then
+                  echo "==> Limpiando resource policy del API (opcional)"
+                  aws apigateway update-rest-api \
+                    --rest-api-id "${API_ID}" \
+                    --patch-operations op=replace,path=/policy,value='' >/dev/null || true
+                fi
+
+                echo "==> Deploy al stage: ${STAGE_NAME}"
+                aws apigateway create-deployment \
+                  --rest-api-id "${API_ID}" \
+                  --stage-name "${STAGE_NAME}" \
+                  --description "CI deploy $(date -u +%Y-%m-%dT%H:%M:%SZ)" >/dev/null || true
 
                 INVOKE_URL="https://${API_ID}.execute-api.${REGION}.amazonaws.com/${STAGE_NAME}"
                 echo "Invoke URL: ${INVOKE_URL}"
                 echo "##vso[task.setvariable variable=API_LUCIA_URL]${INVOKE_URL}"
 
+                echo "==> Smoke test GET /health"
                 CODE=$(curl -s -o /tmp/resp.json -w "%{http_code}" "${INVOKE_URL}/health")
                 echo "HTTP ${CODE}"
                 cat /tmp/resp.json || true
                 [ "${CODE}" = "200" ] || { echo "Smoke test API GW falló"; exit 1; }
+
                 echo "Integración REST API OK"
 
           - task: AWSShellScript@1
