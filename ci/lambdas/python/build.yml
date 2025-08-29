@@ -217,7 +217,7 @@ stages:
 
           # API Gateway (opcional, desactivado por defecto)
           - task: AWSShellScript@1
-            displayName: "Integrar con API Gateway (idempotente)"
+            displayName: "Integrar con API Gateway (idempotente + diagnóstico)"
             condition: and(succeeded(), eq('${{ parameters.enable_apigw }}', true))
             inputs:
               awsCredentials: "$(AWS_SVC)"
@@ -231,7 +231,7 @@ stages:
                 ACCOUNT_ID="$(ID_CUENTA)"
                 FUNCTION_NAME="$(FUNCIONALIDAD)-$(env)"
                 STAGE_NAME="$(env)"
-                FUNCTION_QUALIFIER=""   # ej: ":prod" si usas alias
+                FUNCTION_QUALIFIER=""
 
                 echo "==> Asegurar REST API: ${API_NAME}"
                 API_ID=$(aws apigateway get-rest-apis \
@@ -244,11 +244,9 @@ stages:
                   echo "Usando API existente: ${API_ID}"
                 fi
 
-                echo "==> Obtener root resource id"
                 ROOT_ID=$(aws apigateway get-resources --rest-api-id "${API_ID}" \
                   --query "items[?path=='/'].id | [0]" --output text)
 
-                echo "==> Asegurar recurso {proxy+}"
                 PROXY_ID=$(aws apigateway get-resources --rest-api-id "${API_ID}" \
                   --query "items[?pathPart=='{proxy+}'].id | [0]" --output text 2>/dev/null || echo "None")
                 if [ -z "${PROXY_ID}" ] || [ "${PROXY_ID}" = "None" ]; then
@@ -287,7 +285,7 @@ stages:
                         --api-key-required false >/dev/null
                     fi
                   else
-                    # Forzar a NONE y apiKeyRequired=false si venía de antes
+                    # Fuerza NONE y apiKeyRequired=false si venía distinto
                     aws apigateway update-method \
                       --rest-api-id "${API_ID}" \
                       --resource-id "${RID}" \
@@ -317,10 +315,7 @@ stages:
                   fi
                 }
 
-                echo "==> Asegurar ANY en '/'"
                 ensure_any_proxy "${ROOT_ID}" "false"
-
-                echo "==> Asegurar ANY en '/{proxy+}'"
                 ensure_any_proxy "${PROXY_ID}" "true"
 
                 echo "==> Permiso lambda:InvokeFunction (idempotente)"
@@ -335,13 +330,35 @@ stages:
                   --region "${REGION}" >/dev/null 2>&1
                 set -e
 
-                # (OPCIONAL) Si sospechas que hay una resource policy que bloquea, puedes limpiarla:
-                # OJO: actívalo sólo si sabes que no usas policy/WAF/condiciones de seguridad en ese API.
+                # === Opcionales de policy ===
+                # 1) Para limpiar completamente la policy existente:
                 if [ "${RESET_API_POLICY:-false}" = "true" ]; then
                   echo "==> Limpiando resource policy del API (opcional)"
                   aws apigateway update-rest-api \
                     --rest-api-id "${API_ID}" \
                     --patch-operations op=replace,path=/policy,value='' >/dev/null || true
+                fi
+
+                # 2) Para aplicar una policy permisiva pública (solo si lo deseas)
+                if [ "${ALLOW_PUBLIC:-false}" = "true" ]; then
+                  echo "==> Aplicando resource policy permisiva (pública)"
+                  cat > /tmp/policy.json <<POL
+                  {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                      {
+                        "Sid": "AllowEveryoneInvoke",
+                        "Effect": "Allow",
+                        "Principal": "*",
+                        "Action": "execute-api:Invoke",
+                        "Resource": "arn:aws:execute-api:${REGION}:${ACCOUNT_ID}:${API_ID}/*/*/*"
+                      }
+                    ]
+                  }
+                  POL
+                  aws apigateway update-rest-api \
+                    --rest-api-id "${API_ID}" \
+                    --patch-operations op=replace,path=/policy,value="$(cat /tmp/policy.json | tr -d '\n')" >/dev/null
                 fi
 
                 echo "==> Deploy al stage: ${STAGE_NAME}"
@@ -358,7 +375,20 @@ stages:
                 CODE=$(curl -s -o /tmp/resp.json -w "%{http_code}" "${INVOKE_URL}/health")
                 echo "HTTP ${CODE}"
                 cat /tmp/resp.json || true
-                [ "${CODE}" = "200" ] || { echo "Smoke test API GW falló"; exit 1; }
+
+                if [ "${CODE}" != "200" ]; then
+                  echo "==> Diagnóstico (API 403 u otro)"
+                  echo "-- get-rest-api policy --"
+                  aws apigateway get-rest-api --rest-api-id "${API_ID}" --query policy --output text || true
+                  echo "-- get-method (root ANY) --"
+                  aws apigateway get-method --rest-api-id "${API_ID}" --resource-id "${ROOT_ID}"  --http-method ANY || true
+                  echo "-- get-method (proxy ANY) --"
+                  aws apigateway get-method --rest-api-id "${API_ID}" --resource-id "${PROXY_ID}" --http-method ANY || true
+                  echo "-- get-stage --"
+                  aws apigateway get-stage  --rest-api-id "${API_ID}" --stage-name "${STAGE_NAME}" || true
+                  echo "Smoke test API GW falló"
+                  exit 1
+                fi
 
                 echo "Integración REST API OK"
 
