@@ -1,0 +1,31 @@
+stages:
+  - stage:
+    displayName: Run PSQL Scripts
+    variables:
+    - group: ${{ parameters.variableGroup }}
+    
+    jobs:
+    - job: RunPSqlScripts
+      displayName: Install - Uninstall scripts
+      pool: "BTG Colombia - Azure DevOps"
+      steps:
+
+        # INSTALL MODULE
+        - script: "pip3 install RunPsqlScripts==0.3.1"
+          displayName: "Command Line Script (Install module)"
+        
+        # RETRIEVE SECRET INFO
+        - task: AmazonWebServices.aws-vsts-tools.SecretsManagerGetSecret.SecretsManagerGetSecret@1
+          displayName: "Secrets Manager Get Secret"
+          inputs:
+            awsCredentials: ${{ parameters.awsCredentials }}
+            regionName: "us-east-1"
+            secretIdOrName: $(secretName)
+            variableName: secret
+        
+        # EXECUTE
+        - script: |
+            echo 'Script ejecutado = $(runPsqScript)'
+            $(runPsqScript)
+          workingDirectory: .
+          displayName: "Command Line Script (Execute module)"

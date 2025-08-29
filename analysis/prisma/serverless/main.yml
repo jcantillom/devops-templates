@@ -1,0 +1,25 @@
+jobs:
+  - job: Prisma_deploy
+    displayName: 🛡️Checkov Prisma Analysis🛡️🚨
+    condition: not(eq(variables[dependencies.initJob.outputs['init.repoName']],'true'))
+    steps:
+      - task: CmdLine@2
+        displayName: "Checkov Prisma Analysis - bypass"
+        inputs:
+          script: |
+            echo "Bypass Prisma"
+
+    #  - task: CmdLine@2
+    #    displayName: "Checkov Prisma Analysis"
+    #    inputs:
+    #      script: |
+
+    #        YELLOW='\033[1;33m'
+    #        NC='\033[0m'
+
+#            pipenv --rm 
+#            pipenv run pip install checkov
+#            pipenv run checkov -d ./ --prisma-api-url https://api2.prismacloud.io --bc-api-key $(username)::$(password) --quiet --repo-id $(System.TeamProjectId)/$(Build.Repository.Name) --branch $(Build.SourceBranchName)
+#
+#            echo "======================================================"
+#            echo -e "${YELLOW} IMPORTANTE - En un futuro esta tarea actuará como breaker si no se tienen las vulnerabilidades corregidas${NC}"

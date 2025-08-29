@@ -1,0 +1,22 @@
+variables:
+  - ${{ if eq(variables['Build.SourceBranch'], 'refs/heads/development') }}:
+      - name: env
+        value: 'dev'
+
+  - ${{ elseif eq(variables['Build.SourceBranch'], 'refs/heads/release') }}:
+      - name: env
+        value: 'qa'
+
+
+  - ${{ elseif eq(variables['Build.SourceBranch'], 'refs/heads/uat') }}:
+      - name: env
+        value: 'uat'
+
+
+  - ${{ elseif or(eq(variables['Build.SourceBranch'], 'refs/heads/trunk'),eq(variables['Build.SourceBranch'], 'refs/heads/master'),eq(variables['Build.SourceBranch'], 'refs/heads/main')) }}:
+      - name: env
+        value: pdn
+
+      
+
+  

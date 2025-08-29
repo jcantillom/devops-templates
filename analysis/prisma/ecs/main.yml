@@ -1,0 +1,68 @@
+jobs:
+  - job: prisma_ECR_image
+    displayName: 🛡️Checkov Prisma Analysis🛡️🚨
+    # condition: not(eq(variables[dependencies.initJob.outputs['init.repoName']],'true'))
+    steps:
+      - template: replace/${{ parameters.type }}.yml
+        parameters:
+          workPath: ${{ parameters.workPath }}
+
+      - task: AWSShellScript@1
+        displayName: Get Account Id and imageName
+        inputs:
+          awsCredentials: $(awsCredentials)
+          regionName: $(region)
+          scriptType: "inline"
+          workingDirectory: "${{ parameters.workPath }}"
+          inlineScript: |
+            accountId=$(aws sts get-caller-identity --output text --query 'Account')
+            echo "Account ID: $accountId"
+            echo "##vso[task.setvariable variable=accountId;]$accountId"
+            imageName=$accountId.dkr.ecr.$(region).amazonaws.com/ecr-$(project)-$(stage)-${{ parameters.key }}
+            echo "image Name: $imageName"
+            echo "##vso[task.setvariable variable=imageName;]$imageName"
+
+      - task: AWSShellScript@1
+        displayName: ECR Docker Login
+        inputs:
+          awsCredentials: $(awsCredentials)
+          regionName: $(region)
+          scriptType: "inline"
+          inlineScript: |
+            aws ecr get-login-password --region $(region) | docker login --username AWS --password-stdin $(accountId).dkr.ecr.$(region).amazonaws.com
+
+      - task: AWSShellScript@1
+        displayName: Docker build
+        inputs:
+          awsCredentials: $(awsCredentials)
+          regionName: $(region)
+          scriptType: "inline"
+          inlineScript: |
+            docker build -t $(imageName) -t $(imageName):latest .
+          disableAutoCwd: true
+          workingDirectory: "${{ parameters.workPath }}"
+
+    #  - task: prisma-cloud-compute-scan@3
+    #    displayName: Prisma image scan
+    #    # condition: not(eq(variables[dependencies.initJob.outputs['init.repoName']],'true'))
+    #    inputs:
+    #      scanType: "images"
+    #      twistlockService: "Prisma Compute Scan"
+    #      artifact: "$(imageName):$(version)"
+
+      - task: AWSShellScript@1
+        displayName: Docker push
+        inputs:
+          awsCredentials: $(awsCredentials)
+          regionName: $(region)
+          scriptType: "inline"
+          inlineScript: |
+            docker push $(imageName) --all-tags
+
+      - task: AmazonWebServices.aws-vsts-tools.SecretsManagerCreateOrUpdateSecret.SecretsManagerCreateOrUpdateSecret@1
+        displayName: "Secrets Manager Create/Update Secret: "
+        inputs:
+          awsCredentials: $(awsCredentials)
+          regionName: $(region)
+          secretNameOrId: "scm-$(project)-$(stage)-${{ parameters.key }}-version"
+          secretValue: '{"version": "$(version)"}'

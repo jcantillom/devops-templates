@@ -1,0 +1,216 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: CloudFormation Template for create a RDS Instance.
+Parameters:
+  stage:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - pdn
+      - uat
+      - qc
+      - dev
+  project:
+    Type: String
+  dbName:
+    Type: String
+  dbPort:
+    Type: Number
+    Description: Database port
+  dbAllocatedStorage:
+    Default: '20'
+    Description: The size of the database (GiB)
+    Type: Number
+    MinValue: '20'
+    MaxValue: '1024'
+    ConstraintDescription: must be between 20 and 65536 GiB.
+  rdsInstanceType:
+    Type: String
+    Description: Clase (size) de la base de datos
+  preferredBackupWindow:
+    Description: 'The daily time range in UTC during which you want to create automated backups.'
+    Type: String
+    Default: '02:00-03:00'
+  preferredMaintenanceWindow:
+    Description: 'The weekly time range (in UTC) during which system maintenance can occur.'
+    Type: String
+    Default: 'sun:03:00-sun:04:00'
+  Engine:
+    Description: 'Instance engine and version'
+    Type: String
+  kmsARN:
+    Type: String
+  dbUsername:
+    Type: String
+  dbPassword:
+    Type: String
+
+
+Mappings:
+  EngineMap: 
+    'postgresql-15.4':
+      Engine: 'postgres'
+      EngineVersion: '15.4'
+      ClusterParameterGroupFamily: 'postgres15'
+      ParameterGroupFamily: 'postgres15'   
+    'postgresql-14.18':
+      Engine: 'postgres'
+      EngineVersion: '14.18'
+      ClusterParameterGroupFamily: 'postgres14'
+      ParameterGroupFamily: 'postgres14'
+    'postgresql-13.12':
+      Engine: 'postgres'
+      EngineVersion: '13.12'
+      ClusterParameterGroupFamily: 'postgres13'
+      ParameterGroupFamily: 'postgres13'
+    'postgresql-12.16':
+      Engine: 'postgres'
+      EngineVersion: '12.16'
+      ClusterParameterGroupFamily: 'postgres12'
+      ParameterGroupFamily: 'postgres12'
+    'postgresql-11.21':
+      Engine: 'postgres'
+      EngineVersion: '11.21'
+      ClusterParameterGroupFamily: 'postgres11'
+      ParameterGroupFamily: 'postgres11'
+
+  EKSIPRange:
+    dev:
+      Ip: 100.65.0.0/16
+    qc:
+      Ip: 100.68.0.0/16
+    uat:
+      Ip: 100.66.0.0/16
+    pdn:
+      Ip: 100.67.0.0/16
+
+Conditions:
+
+  hasEngineMySQL: !Equals [!FindInMap [EngineMap, !Ref Engine, Engine], 'aurora-mysql']
+  isDBT3: !Or [ !Or [ !Equals [ !Ref rdsInstanceType, 'db.t3.micro' ], !Equals [ !Ref rdsInstanceType, 'db.t3.small' ] ], !Equals [ !Ref rdsInstanceType, 'db.t3.medium' ] ]
+  enablePerformanceInsights: # aurora-mysql not supported by db.t2 | db.t3 | db.t4g.micro | db.t4g.small
+    !And [ !Not [ !And [ !Condition hasEngineMySQL, !Condition isDBT3 ] ], !Not [!Equals [!Ref rdsInstanceType, 'db.t3.small']] ]
+  isProduction:  !Equals [ !Ref stage, pdn]
+
+Resources:
+  DBSubnetGroup:
+    Type: 'AWS::RDS::DBSubnetGroup'
+    Properties:
+      DBSubnetGroupDescription: Subnet group for Aurora Cluster
+      DBSubnetGroupName: !Sub 'sng-${project}-${stage}-main'
+      SubnetIds: 
+        - !ImportValue PrivateSubnet1RDS
+        - !ImportValue PrivateSubnet2RDS
+        - !ImportValue PrivateSubnet1EC2
+        # - !ImportValue PrivateSubnet3RDS
+      Tags:
+        - Key: Name
+          Value: !Sub 'sng-${project}-${stage}-main'
+
+  DBSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Aurora Cluster security group
+      GroupName: !Sub 'secg-${project}-${stage}-main'
+      VpcId: !ImportValue mainVpcId
+      Tags:
+        - Key: Name
+          Value: !Sub 'secg-${project}-${stage}-main'
+
+  SecurityGroupEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    DependsOn:
+      - DBSubnetGroup 
+      - DBSecurityGroup
+    Properties:
+      GroupId: !Ref DBSecurityGroup
+      IpProtocol: '-1'
+      CidrIp: 10.0.0.0/8
+
+  DefaultCommunicationIngress:
+    Type: 'AWS::EC2::SecurityGroupIngress'
+    DependsOn:
+      - DBSubnetGroup 
+      - DBSecurityGroup
+    Properties:
+      GroupId: !Ref DBSecurityGroup
+      IpProtocol: tcp
+      FromPort: !Ref dbPort
+      ToPort: !Ref dbPort
+      CidrIp: 10.0.0.0/8
+      
+  InternalCommunicationIngress:
+    Type: 'AWS::EC2::SecurityGroupIngress'
+    DependsOn:
+      - DBSubnetGroup 
+      - DBSecurityGroup 
+    Properties:
+      GroupId: !Ref DBSecurityGroup
+      IpProtocol: '-1'
+      SourceSecurityGroupId: !GetAtt DBSecurityGroup.GroupId
+
+  DBParameterGroup:
+    Type: 'AWS::RDS::DBParameterGroup'
+    Properties:
+      Description: !Ref 'AWS::StackName'
+      Family: !FindInMap [EngineMap, !Ref Engine, ParameterGroupFamily]
+
+  DBInstance:
+    Type: 'AWS::RDS::DBInstance'
+    Properties:
+      MasterUsername: !Ref dbUsername
+      MasterUserPassword: !Ref dbPassword
+      BackupRetentionPeriod: !If [isProduction, 35, 1]
+      PreferredBackupWindow: !Ref preferredBackupWindow
+      PreferredMaintenanceWindow: !Ref preferredMaintenanceWindow
+      AllocatedStorage: 20
+      Port: !Ref dbPort
+      DBInstanceIdentifier: !Sub 'db-${project}-${stage}-01'
+      DBName: !Ref dbName
+      DBInstanceClass: !Ref rdsInstanceType
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      Engine: !FindInMap [EngineMap, !Ref Engine, Engine]
+      EngineVersion: !FindInMap [EngineMap, !Ref Engine, EngineVersion]
+      PubliclyAccessible: 'false'
+      EnablePerformanceInsights: !If [enablePerformanceInsights, true, false]
+      PerformanceInsightsRetentionPeriod: !If [enablePerformanceInsights, 7, !Ref AWS::NoValue]
+      PerformanceInsightsKMSKeyId: !If [enablePerformanceInsights, !Ref kmsARN, !Ref AWS::NoValue]
+      MultiAZ: !If [isProduction, true, false]
+      StorageEncrypted: true
+      KmsKeyId: !Ref kmsARN
+      VPCSecurityGroups:
+        - !Ref DBSecurityGroup
+       # Solo se asigna si el parámetro fue definido
+
+
+Outputs:
+  DBAddress:
+    Description: Host of BD
+    Value: !GetAtt DBInstance.Endpoint.Address
+    Export:
+      Name: !Sub "${project}-DBAddress"
+
+  DBPort:
+    Description: Port of BD
+    Value: !GetAtt DBInstance.Endpoint.Port
+    Export:
+      Name: !Sub "${project}-DBPort"
+
+  DBSecurityGroup:
+    Description: DB DBSecurityGroup
+    Value: !Ref DBSecurityGroup
+    Export:
+      Name: !Sub "${project}-DBSecurityGroup"
+
+  DBSubnetGroup:
+    Description: DB DBSubnetGroup
+    Value: !Ref DBSubnetGroup
+    Export:
+      Name: !Sub "${project}-DBSubnetGroup"
+
+  DBSecurityGroupId:
+    Description: DB Security Group ID
+    Value: !GetAtt DBSecurityGroup.GroupId
+    Export:
+      Name: !Sub "${project}-DBSecurityGroupId"
+
+  

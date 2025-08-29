@@ -1,0 +1,33 @@
+
+    steps:
+      - task: CmdLine@2
+        displayName: "Validate Token"
+        inputs:
+          script: |
+            echo 'vstsMavenAccessTokenBtgColombia= $(vstsMavenAccessTokenBtgColombia)'
+
+      - task: Gradle@3
+        displayName: 'gradlew clean build'
+        inputs:
+          tasks: 'clean build -PvstsMavenAccessTokenBtgColombia=$(vstsMavenAccessTokenBtgColombia)'
+          publishJUnitResults: false
+          javaHomeOption: Path
+          jdkDirectory: '/usr/lib/jvm/java-17-amazon-corretto.x86_64/'
+
+      - task: SonarQubePrepare@7
+        displayName: 'Prepare analysis on SonarQube'
+        inputs:
+          SonarQube: 'Sonar Qube'
+          scannerMode: cli
+
+      - task: SonarQubeAnalyze@7
+        displayName: 'Run Code Analysis'
+
+
+      - task: SonarQubePublish@7
+        displayName: 'Publish Quality Gate Result'
+
+      - task: sonar-buildbreaker@8
+        displayName: "SonarQube Breaker"
+        inputs:
+          SonarQube: "Sonar Qube"

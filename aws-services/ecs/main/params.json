@@ -1,0 +1,27 @@
+[ 
+    {
+        "ParameterKey": "stage",
+        "ParameterValue": "$(stage)"
+    },
+    {
+        "ParameterKey": "project",
+        "ParameterValue": "$(project)"
+    },
+    {
+        "ParameterKey": "cfBucketName",
+        "ParameterValue": "$(cfBucketName)"
+    },
+    
+    {
+        "ParameterKey": "loadBalancerPort",
+        "ParameterValue": "$(loadBalancerPort)"
+    },
+    {
+        "ParameterKey": "loadBalancerCertificate",
+        "ParameterValue": "$(loadBalancerCertificate)"
+    },
+    {
+        "ParameterKey": "publicLB",
+        "ParameterValue": "$(publicLB)"
+    }
+]

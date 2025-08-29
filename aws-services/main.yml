@@ -1,0 +1,46 @@
+
+jobs: 
+  - job: create_resource
+    displayName: Create AWS Resource
+    steps: 
+      - checkout: devops-templates
+        displayName: 'Fetch devops template repository'
+      
+      - task: file-to-variable@1
+        displayName: Add tags as variables 
+        inputs:
+          filepath: $(System.DefaultWorkingDirectory)/aws-services/services-tags
+          variableName: tags
+          verbose: true
+      
+      - task: replace-variables-in-file@1
+        displayName: Replace stack params
+        inputs:
+          filepath: $(System.DefaultWorkingDirectory)/aws-services/${{parameters.service}}/${{parameters.resource}}/params.json
+          contentToVariable: false
+          endWithNewLine: true
+          verbose: true
+      
+      - task: S3Upload@1
+        displayName: Upload template in S3
+        inputs:
+          awsCredentials: $(awsCredentials)
+          regionName: $(region)
+          bucketName: $(cfBucketName)
+          sourceFolder: '$(System.DefaultWorkingDirectory)/aws-services/${{parameters.service}}/${{parameters.resource}}'
+          globExpressions: '**'
+          targetFolder: $(project)/${{parameters.service}}/${{parameters.resource}}
+
+
+      - task: CloudFormationCreateOrUpdateStack@1
+        displayName: Create Stack 
+        inputs:
+          awsCredentials: $(awsCredentials)
+          regionName: $(region)
+          stackName: $(project)-${{parameters.key}}-${{parameters.service}}-${{parameters.resource}}-$(stage)
+          templateSource: s3
+          s3BucketName: $(cfBucketName)
+          s3ObjectKey: $(project)/${{parameters.service}}/${{parameters.resource}}/deploy.yml
+          templateParametersFile: $(System.DefaultWorkingDirectory)/aws-services/${{parameters.service}}/${{parameters.resource}}/params.json
+          tags: $(tags)
+          onFailure: 'DO_NOTHING'

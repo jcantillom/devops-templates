@@ -1,0 +1,78 @@
+jobs:
+  - job: Fluid_deploy
+    displayName: 🛡️Fluid Attacks Job🛡️🚨
+    condition: not(eq(variables[dependencies.initJob.outputs['init.repoName']],'true'))
+    steps:
+      - task: AmazonWebServices.aws-vsts-tools.LambdaInvokeFunction.LambdaInvokeFunction@1
+        displayName: 'Invoke Lambda Function: func-Fluid-Repo-Search-pdn'
+        inputs:
+          awsCredentials: 'MultiProjects-PDN-INFRA'
+          regionName: 'us-east-1'
+          functionName: 'func-Fluid-Repo-Search-pdn'
+          payload: |
+            {
+              "repoName":"$(Build.Repository.Name)"
+            }
+          outputVariable: response
+          logType: Tail
+
+      - task: CmdLine@2
+        displayName: 'Fluid Attacks Check'
+        inputs:
+          script: |
+            resultCode=$(echo "$(response)" | grep -o '"resultCode": [0-9]*' | grep -o '[0-9]*')
+            resultAuditToBe=$(echo "$(response)" | grep -oE '"resultAuditToBe": (true|false)}' | grep -oE '(true|false)')
+            resultName=$(echo "$(response)" | grep -oP 'resultRepoFluidName": "\K[^"]*(?=", "resultCode")')
+            token=$(echo "$(response)" | grep -oP 'resultRepoFluidGroupToken": "\K[^"]*(?=", "resultRepoFluidName")')
+
+            if [ "$resultCode" -eq 1 ]; then
+                    echo "Downloding Image"
+                    docker pull fluidattacks/forces:latest
+                    echo "🛡️🛡️Fluid Attacks Checking🛡️🛡️"
+                    docker run --rm fluidattacks/forces:latest forces --token $token -v --repo-name $resultName --strict
+                    if [ $? -eq 0 ]; then
+                      echo "FINAL STATUS: ✅ El desarrollo cumple con las definiciones establecidas de seguridad ✅"
+                      echo '
+                        __                       __                 __     
+                        /\ \                     /\ \               /\ \    
+                        \ \ \___      __      ___\ \ \/ \      __   \_\ \   
+                        \ \  _  \  / __ \   / ___\ \   <    / __ \ / _  \  
+                          \ \ \ \ \/\ \L\ \_/\ \__/\ \ \\ \ /\  __//\ \L\ \ 
+                          \ \_\ \_\ \__/ \_\ \____\\ \_\ \_\ \____\ \___ _\
+                            \/_/\/_/\/__/\/_/\/____/ \/_/\/_/\/____/\/__ _ /                                                                                                                                                                                                                                                   
+                      '
+                    else
+                      echo "FINAL STATUS: ❌ El desarrollo no cumple con las definiciones establecidas de seguridad ❌"
+                      echo '
+                        __                       __                 __     
+                        /\ \                     /\ \               /\ \    
+                        \ \ \___      __      ___\ \ \/ \      __   \_\ \   
+                        \ \  _  \  / __ \   / ___\ \   <    / __ \ / _  \  
+                          \ \ \ \ \/\ \L\ \_/\ \__/\ \ \\ \ /\  __//\ \L\ \ 
+                          \ \_\ \_\ \__/ \_\ \____\\ \_\ \_\ \____\ \___ _\
+                            \/_/\/_/\/__/\/_/\/____/ \/_/\/_/\/____/\/__ _ /                                                                                                                                                                                                                                                   
+                      '
+                      echo "EL REPOSITORIO CUENTA CON VULNERABILIDADES POR ENCIMA DE LA SEVERIDAD DEFINA POR SEGURIDAD"
+                      echo "REVISA FLUID Y CORRIGE LAS VULNERABILIDADES ABIERTAS, SI NECESITAS AYUDA COMUNICATE CON SEGURIDAD" 
+                      exit 125
+                    fi
+            else
+                if [ "$resultCode" -eq 2 ]; then
+                    echo '
+            FINAL STATUS: ✅ El repositorio cuenta con una excepción valida. Se puede proceder con el deploy ✅
+                    '
+                    exit 0
+                fi
+                if [ "$resultAuditToBe" = "true" ]; then
+                    echo "FINAL STATUS: ⚠️ El repositorio debe ir auditado ⚠️"
+                    echo '
+
+            El presente repositorio paso por una revisión inicial donde se determinó que debería ser auditado por Fluid dentro del modelo de hacking continuo que se dispone. 
+            Favor enviar un correo a 🛡️ OL-SecOpsCol@btgpactual.com 🛡️ indicando el motivo por el cual no se encuentra o no debería encontrarse auditado para su debida revisión
+            por parte de los analistas de seguridad.
+
+            De ser necesario el equipo de seguridad agregará el repositorio al grupo correspondiente de Fluid o de no serlo se creará una excepción al mismo.
+            Muchas gracias.
+            '
+                fi
+            fi

@@ -1,0 +1,34 @@
+AWSTemplateFormatVersion: 2010-09-09 
+Description: Create DNS Private Namespace.
+Parameters:
+  stage:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - pdn
+      - uat
+      - qa
+      - dev
+  project:
+    Type: String
+
+Resources:
+  PrivateNamespace:
+    Type: AWS::ServiceDiscovery::PrivateDnsNamespace
+    Properties:
+      Name: !Sub "${project}.net"
+      Vpc: !ImportValue mainVpcId
+      Tags:
+        - Key: Name
+          Value: !Sub 'dsrv-${project}-${stage}-namespace'
+
+Outputs:
+  Namespace:
+    Description: Namespace
+    Value: !Sub "${project}.net"
+  NamespaceId:
+    Description: Namespace Id
+    Value: !Ref PrivateNamespace
+  NamespaceARN:
+    Description: Namespace ARN
+    Value: !GetAtt PrivateNamespace.Arn

@@ -1,0 +1,108 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: CloudFormation Template for create an Security Groups and Subnet Group for db credentials.
+Parameters:
+  stage:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - pdn
+      - uat
+      - qc
+      - dev
+  project:
+    Type: String
+  dbPort:
+    Type: Number
+    Description: Database port
+
+Mappings:
+  EKSIPRange:
+    dev:
+      Ip: 100.65.0.0/16
+    qc:
+      Ip: 100.68.0.0/16
+    uat:
+      Ip: 100.66.0.0/16
+    pdn:
+      Ip: 100.67.0.0/16
+
+Resources:
+
+  DBSubnetGroup:
+    Type: 'AWS::RDS::DBSubnetGroup'
+    Properties:
+      DBSubnetGroupDescription: Subnet group for Aurora Cluster
+      DBSubnetGroupName: !Sub 'sng-${project}-${stage}-main'
+      SubnetIds: 
+        - !ImportValue PrivateSubnet1RDS
+        - !ImportValue PrivateSubnet2RDS
+        # - !ImportValue PrivateSubnet3RDS
+      Tags:
+        - Key: Name
+          Value: !Sub 'sng-${project}-${stage}-main'
+
+  DBSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Aurora Cluster security group
+      GroupName: !Sub 'secg-${project}-${stage}-main'
+      VpcId: !ImportValue mainVpcId
+      Tags:
+        - Key: Name
+          Value: !Sub 'secg-${project}-${stage}-main'
+
+  SecurityGroupEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    DependsOn:
+      - DBSubnetGroup 
+      - DBSecurityGroup
+    Properties:
+      GroupId: !Ref DBSecurityGroup
+      IpProtocol: '-1'
+      CidrIp: 10.0.0.0/8
+
+  DefaultCommunicationIngress:
+    Type: 'AWS::EC2::SecurityGroupIngress'
+    DependsOn:
+      - DBSubnetGroup 
+      - DBSecurityGroup
+    Properties:
+      GroupId: !Ref DBSecurityGroup
+      IpProtocol: tcp
+      FromPort: !Ref dbPort
+      ToPort: !Ref dbPort
+      CidrIp: 10.0.0.0/8
+
+  EKSCommunicationIngress:
+    Type: 'AWS::EC2::SecurityGroupIngress'
+    DependsOn:
+      - DBSubnetGroup 
+      - DBSecurityGroup
+    Properties:
+      GroupId: !Ref DBSecurityGroup
+      IpProtocol: tcp
+      FromPort: !Ref dbPort
+      ToPort: !Ref dbPort
+      CidrIp: !FindInMap [EKSIPRange, !Ref stage, Ip]   
+      
+  InternalCommunicationIngress:
+    Type: 'AWS::EC2::SecurityGroupIngress'
+    DependsOn:
+      - DBSubnetGroup 
+      - DBSecurityGroup 
+    Properties:
+      GroupId: !Ref DBSecurityGroup
+      IpProtocol: '-1'
+      SourceSecurityGroupId: !GetAtt DBSecurityGroup.GroupId
+
+Outputs:
+  DBSubnetGroup:
+    Description: DB DBSubnetGroup
+    Value: !Ref DBSubnetGroup
+
+  DBSecurityGroup:
+    Description: DB DBSecurityGroup
+    Value: !Ref DBSecurityGroup 
+
+  GroupId:
+    Value: !GetAtt DBSecurityGroup.GroupId

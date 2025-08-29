@@ -1,0 +1,149 @@
+AWSTemplateFormatVersion: 2010-09-09 
+Description: Deploy a complete ECS + Fargate solution.
+Parameters:
+  # Generic parameters
+  stage:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - pdn
+      - uat
+      - qa
+      - dev
+  project:
+    Type: String
+  infraProject:
+    Type: String
+  cfBucketName:
+    Type: String
+  # Service A Parameters
+  serviceName:
+    Type: String
+  serviceBasePath:
+    Type: String
+    Default: /
+  serviceHealthCheckPath:
+    Type: String
+    Default: /
+  servicePriority:
+    Type: Number
+    Default: 1
+  containerCPU:
+    Type: Number
+    Default: 256
+    AllowedValues:
+      - 256 
+      - 512 
+      - 1024
+      - 2048
+      - 4096
+  containerRAM:
+    Type: String
+    Default: 0.5GB
+    AllowedValues:
+      - 0.5GB
+      - 1GB
+      - 2GB
+      - 3GB
+      - 4GB
+      - 5GB
+      - 7GB
+      - 8GB
+      - 9GB
+      - 10GB
+      - 11GB
+      - 12GB
+      - 13GB
+      - 14GB
+      - 15GB
+      - 16GB
+      - 17GB
+      - 18GB
+      - 19GB
+      - 20GB
+      - 21GB
+      - 22GB
+      - 23GB
+      - 24GB
+      - 25GB
+      - 26GB
+      - 27GB
+      - 28GB
+      - 29GB
+      - 30GB
+  containerPort:
+    Type: Number
+    Default: 8080
+  minContainers:
+    Type: Number
+    Default: 2
+  maxContainers:
+    Type: Number
+    Default: 4
+  autoScalingTargetValue:
+    Type: Number
+    Default: 80
+  desiredTask:
+    Type: Number
+    Default: 1
+
+Resources:
+
+  Service:
+    Type: AWS::CloudFormation::Stack
+    Properties: 
+      TemplateURL: !Sub https://s3.amazonaws.com/${cfBucketName}/${project}/ecs/service/resource.yml
+      Parameters: 
+        stage : !Ref stage
+        project: !Ref project
+        serviceName: !Ref serviceName
+        basePath: !Ref serviceBasePath
+        healthCheckPath: !Ref serviceHealthCheckPath
+        priority: !Ref servicePriority
+        containerCPU: !Ref containerCPU
+        containerRAM: !Ref containerRAM
+        containerPort: !Ref containerPort
+        minContainers: !Ref minContainers
+        maxContainers: !Ref maxContainers
+        autoScalingTargetValue: !Ref autoScalingTargetValue
+        desiredTask: !Ref desiredTask
+
+        taskRoleARN: 
+          Fn::ImportValue:
+            !Sub "${project}-${serviceName}-RoleARN"
+        
+        imageVersion: !Sub 
+          - '{{resolve:secretsmanager:${secretArn}::version}}'
+          - secretArn: 
+              Fn::ImportValue:
+                'Fn::Sub': '${project}-${serviceName}-imageVersionSecretARN'
+        imageRepoUri: 
+          Fn::ImportValue:
+            !Sub "${project}-${serviceName}-imageRepositoryURI"
+
+        # Import from mainProject
+        clusterName: 
+          Fn::ImportValue:
+            !Sub '${infraProject}-ClusterName'
+        
+        loadBalancerSecurityGroupId: 
+          Fn::ImportValue:
+            !Sub '${infraProject}-loadBalancerSecurityGroupId'
+        loadBalancerListenerARN: 
+          Fn::ImportValue:
+            !Sub '${infraProject}-loadBalancerListenerARN'
+          
+        namespaceId: 
+          Fn::ImportValue:
+            !Sub '${infraProject}-NamespaceId'
+        
+        autoScalingRoleARN: 
+          Fn::ImportValue:
+            !Sub '${infraProject}-AutoScalingRoleARN'
+        executionRoleARN: 
+          Fn::ImportValue:
+            !Sub '${infraProject}-ExecutionRoleARN'
+        
+        internalSecurityGroupId: 
+          Fn::ImportValue:
+            !Sub '${infraProject}-ContainerInternalSecurityGroupId'

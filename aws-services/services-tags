@@ -1,0 +1,9 @@
+Ambiente=$(stage)
+Aplicativo=$(aplicativo)
+Area=$(area)
+Celula=$(celula)
+Compania=$(compania)
+Despliegue=CloudFormation
+Disponibilidad=$(disponibilidad)
+Producto=$(producto)
+Proyecto=$(proyecto)

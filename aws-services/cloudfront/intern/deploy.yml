@@ -1,0 +1,149 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: CloudFormation Distribution and OAI CloudFront, Bucket
+Parameters:
+  stage:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - pdn
+      - uat
+      - qc
+      - dev
+  project:
+    Type: String
+  cfBucketName:
+    Type: String
+  infraProject:
+    Type: String
+  frontCertificateARN:
+    Type: String
+  frontURL:
+    Type: String
+  cachePolicy:
+    Type: String
+    Default: CachingDisabled
+    AllowedValues:
+      - CachingOptimized
+      - CachingDisabled
+      - CachingOptimizedForUncompressedObjects
+      - Elemental-MediaPackage
+      - Amplify
+
+Mappings:
+  CachePolicyMapId:
+    'CachingOptimized':
+      Id: 658327ea-f89d-4fab-a63d-7e88639e58f6
+    'CachingDisabled':
+      Id: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+    'CachingOptimizedForUncompressedObjects':
+      Id: b2884449-e4de-46a7-ac36-70bc7f1ddd6d
+    'Elemental-MediaPackage':
+      Id: 08627262-05a9-4f76-9ded-b50ca2e3a84f
+    'Amplify':
+      Id: 2e54312d-136d-493c-8eb9-b001f22f67d2
+
+
+Resources:
+  cfOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Description: !Sub 'Policy to ${project}'
+        Name: !Sub 'oac-${project}'
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always # always | never | no-override
+        SigningProtocol: sigv4
+
+  # Default bucket
+  frontBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 's3-${project}-${stage}-front'
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: "AES256"
+
+  cfDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Comment: !Sub 'CloudFront Distribution to ${project}'
+        DefaultRootObject: index.html
+        Enabled: true
+        HttpVersion: http2and3 # http1.1 | http2 | http2and3 | http3
+        IPV6Enabled: true
+        # Logging:
+        #   Bucket: bucket-logging
+        #   IncludeCookies: false
+        #   Prefix: !Sub 'cf-${project}/'
+        CustomErrorResponses:
+          - ErrorCode: 404
+            ErrorCachingMinTTL: 60
+            ResponseCode: 404
+            ResponsePagePath: /index.html
+          - ErrorCode: 403
+            ErrorCachingMinTTL: 60
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+        Origins: # Default bucket
+          - DomainName: !GetAtt frontBucket.RegionalDomainName
+            Id: !Ref frontBucket
+            OriginAccessControlId: !Ref cfOAC
+            S3OriginConfig:
+              OriginAccessIdentity: "" # OAI Legacy
+        DefaultCacheBehavior: # Default bucket
+          TargetOriginId: !Ref frontBucket
+          AllowedMethods:
+            - GET
+            - HEAD
+          CachePolicyId: !FindInMap [CachePolicyMapId, !Ref cachePolicy, Id]
+          Compress: true
+          ViewerProtocolPolicy: redirect-to-https
+        PriceClass: PriceClass_100 # PriceClass_100 | PriceClass_200 | PriceClass_All
+        Aliases:
+          - !Ref frontURL
+        CNAMEs:
+          - !Ref frontURL
+        ViewerCertificate:
+          AcmCertificateArn: !Ref frontCertificateARN
+          MinimumProtocolVersion: TLSv1.2_2021 # SSLv3 | TLSv1 | TLSv1.1_2016 | TLSv1.2_2018 | TLSv1.2_2019 | TLSv1.2_2021 | TLSv1_2016
+          SslSupportMethod: sni-only # sni-only | static-ip | vip
+          # CloudFrontDefaultCertificate: true
+        WebACLId:
+          Fn::ImportValue: 
+            !Sub "${infraProject}-CloudFrontWebACLARN"
+  
+  frontBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref frontBucket
+      PolicyDocument:
+        Version: 2012-10-17
+        Id: PolicyForCloudFrontPrivateContent
+        Statement:
+          - Sid: AllowCloudFrontServicePrincipalReadOnly
+            Effect: Allow
+            Action: s3:GetObject
+            Resource: !Sub 'arn:aws:s3:::${frontBucket}/*'
+            Principal:
+              Service: 'cloudfront.amazonaws.com'
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${cfDistribution}'
+
+Outputs:
+  cfDistributionDomainName:
+    Description: CloudFront Distribution DomainName.
+    Value: !GetAtt cfDistribution.DomainName
+    Export:
+      Name: !Sub "${project}-cfDistributionDomainName"
+    
+  cfDistributionID:
+    Description: CloudFront Distribution ID.
+    Value: !GetAtt cfDistribution.Id
+    Export:
+      Name: !Sub "${project}-cfDistributionID"
+  

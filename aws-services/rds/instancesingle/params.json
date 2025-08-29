@@ -1,0 +1,42 @@
+[ 
+    {
+        "ParameterKey": "stage",
+        "ParameterValue": "$(stage)"
+    },
+    {
+        "ParameterKey": "project",
+        "ParameterValue": "$(project)"
+    },
+    {
+        "ParameterKey": "rdsInstanceType",
+        "ParameterValue": "$(rdsInstanceType)"
+    }, 
+    {
+        "ParameterKey": "Engine",
+        "ParameterValue": "$(engine)"
+    }, 
+    {
+        "ParameterKey": "kmsARN",
+        "ParameterValue": "$(kmsARN)"
+    },
+    {
+        "ParameterKey": "dbName",
+        "ParameterValue": "$(dbName)"
+    }, 
+    {
+        "ParameterKey": "dbUsername",
+        "ParameterValue": "$(dbUsername)"
+    }, 
+    {
+        "ParameterKey": "dbPassword",
+        "ParameterValue": "$(dbPassword)"
+    },
+    {
+        "ParameterKey": "dbAllocatedStorage",
+        "ParameterValue": "$(dbAllocatedStorage)"
+    },
+    {
+        "ParameterKey": "dbPort",
+        "ParameterValue": "$(dbPort)"
+    }
+]

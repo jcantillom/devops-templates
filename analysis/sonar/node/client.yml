@@ -1,0 +1,12 @@
+jobs:
+  - job: SonarQubeAnalysis_client
+    displayName: 🛡️Sonarqube Analysis🛡️🚦
+    dependsOn: initJob
+    condition: not(eq(variables[dependencies.initJob.outputs['init.repoName']],'true'))
+    steps:
+      - template: main.yml
+        parameters:
+          workPath: "${{ parameters.workPath }}"
+          testExclusion: "coverage/**, node_modules/**, src/index.*"
+          testInclusions: "**/*tests*/**/*.test.*"
+          repoName: $(Build.Repository.Name)

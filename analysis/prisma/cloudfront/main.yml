@@ -1,0 +1,19 @@
+jobs:
+  - job: prisma
+    displayName: 🛡️Checkov Prisma Analysis🛡️🚨
+    condition: not(eq(variables[dependencies.initJob.outputs['init.repoName']],'true'))
+    steps:
+      # analysis
+      - task: CmdLine@2
+        displayName: "Checkov Prisma Analysis - bypass"
+        inputs:
+          script: |
+            echo "Bypass Prisma"
+    #  - task: CmdLine@2
+    #    displayName: "Prisma Analysis"
+    #    inputs:
+    #      script: |
+    #        echo "======================================================"
+    #        echo "Not implemented yet"
+    #        echo "======================================================"
+    #      workingDirectory: ${{ parameters.workPath }}

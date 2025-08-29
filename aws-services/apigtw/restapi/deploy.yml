@@ -1,0 +1,265 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: CloudFormation ApiGateway.
+Parameters:
+  stage:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - pdn
+      - uat
+      - qc
+      - dev
+  project:
+    Type: String
+  cfBucketName:
+    Type: String
+  infraProject:
+    Type: String
+  authHeaderName:
+    Type: String
+    Default: Authorization
+  azureADTokenURL:
+    Type: String
+    Default: https://login.microsoftonline.com/16e7cf3f-6af4-4e76-941e-aecafb9704e9/oauth2/token
+
+Resources:
+
+  CloudWatchRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'iam-${project}-${stage}-CloudWatchRole'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - apigateway.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs
+
+  Account:
+    Type: AWS::ApiGateway::Account
+    Properties:
+      CloudWatchRoleArn: !GetAtt CloudWatchRole.Arn
+    
+  MainAPI:
+    Type: AWS::ApiGateway::RestApi
+    Properties: 
+      Description: !Sub 'API to ${project}'
+      EndpointConfiguration: 
+        Types: 
+          - PRIVATE
+        VpcEndpointIds: 
+          - Fn::ImportValue: !Sub '${infraProject}-APIGatewayVpcEndpointID'
+      Policy: !Sub |
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": "*",
+              "Action": "execute-api:Invoke",
+              "Resource": "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:*/*/*/*"
+            }
+          ]
+        }
+      Name: !Sub 'apigw-${project}-${stage}-private'
+      DisableExecuteApiEndpoint: true
+      Tags: 
+        - Key: Name
+          Value: !Sub 'apigw-${project}-${stage}-private'
+
+  TokenAuthorizer:
+    Type: AWS::ApiGateway::Authorizer
+    Properties: 
+      AuthorizerResultTtlInSeconds: 0
+      AuthorizerUri: !Sub 
+        - 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AuthorizerLambdaARN}/invocations'
+        - AuthorizerLambdaARN: 
+            Fn::ImportValue: 
+              !Sub '${infraProject}-AuthorizerLambdaARN'
+      Type: REQUEST
+      IdentitySource: !Sub "method.request.header.${authHeaderName}"
+      Name: TokenAuthorizer
+      RestApiId: !Ref MainAPI
+
+  AuthorizerPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: 
+        Fn::ImportValue: 
+          !Sub '${infraProject}-AuthorizerLambdaARN'
+      Principal: apigateway.amazonaws.com
+
+  HealthPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: 
+        Fn::ImportValue: 
+          !Sub '${infraProject}-HealthLambdaARN'
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:us-east-1:${AWS::AccountId}:${MainAPI}/*/*'
+
+  AuthResource:
+    Type: AWS::ApiGateway::Resource
+    Properties: 
+      ParentId: !GetAtt MainAPI.RootResourceId
+      PathPart: "auth"
+      RestApiId: !Ref MainAPI
+
+  TokenResource:
+    Type: AWS::ApiGateway::Resource
+    Properties: 
+      ParentId: !Ref AuthResource
+      PathPart: "token"
+      RestApiId: !Ref MainAPI
+  
+  TokenGetMethod:
+    Type: AWS::ApiGateway::Method
+    Properties: 
+      AuthorizationType: NONE 
+      HttpMethod: 'GET'
+      Integration: 
+          IntegrationHttpMethod: POST
+          Type: HTTP_PROXY
+          Uri: !Ref azureADTokenURL
+      ResourceId: !Ref TokenResource
+      RestApiId: !Ref MainAPI
+  
+  TokenPostMethod:
+    Type: AWS::ApiGateway::Method
+    Properties: 
+      AuthorizationType: NONE 
+      HttpMethod: 'POST'
+      Integration: 
+          IntegrationHttpMethod: POST
+          Type: HTTP_PROXY
+          Uri: !Ref azureADTokenURL
+      ResourceId: !Ref TokenResource
+      RestApiId: !Ref MainAPI
+
+  HealthResource:
+    Type: AWS::ApiGateway::Resource
+    Properties: 
+      ParentId: !GetAtt MainAPI.RootResourceId
+      PathPart: "health"
+      RestApiId: !Ref MainAPI
+  
+  HealthGetMethod: 
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: 'GET'
+      Integration: 
+          IntegrationHttpMethod: POST
+          Type: AWS_PROXY
+          Uri: !Sub 
+            - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${HealthLambdaARN}/invocations
+            - HealthLambdaARN: 
+                Fn::ImportValue: 
+                  !Sub '${infraProject}-HealthLambdaARN'
+      ResourceId: !Ref HealthResource
+      RestApiId: !Ref MainAPI
+  
+  APIGWLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: 
+      LogGroupName: !Sub '/aws/apigateway/apigw-${project}-${stage}-private'
+
+  Deployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: 
+      - TokenGetMethod
+      - TokenPostMethod
+      - HealthGetMethod
+      - APIGWLogGroup
+    Properties:
+      RestApiId: !Ref MainAPI
+      Description: First Deployment
+    
+  Stage:
+    Type: AWS::ApiGateway::Stage
+    DependsOn: 
+      - CloudWatchRole
+      - Account
+    Properties:
+      StageName: !Ref stage
+      Description: !Sub '${stage} stage'
+      AccessLogSetting: 
+          DestinationArn: !GetAtt APIGWLogGroup.Arn
+          Format: '{
+              "requestId": "$context.requestId", 
+              "ip": "$context.identity.sourceIp", 
+              "caller": "$context.identity.caller",
+              "user": "$context.identity.user", 
+              "requestTime": "$context.requestTime", 
+              "httpMethod": "$context.httpMethod",
+              "resourcePath": "$context.resourcePath",
+              "status": "$context.status",
+              "protocol": "$context.protocol",
+              "responseLength": "$context.responseLength" 
+            }'
+      MethodSettings: 
+        - DataTraceEnabled: True
+          HttpMethod: '*'
+          LoggingLevel: INFO
+          MetricsEnabled: True
+          ResourcePath: '/*'
+      RestApiId: !Ref MainAPI
+      DeploymentId: !Ref Deployment
+      Tags: 
+        - Key: "Name"
+          Value: !Sub "apigw-stage-${stage}"
+  
+  GatewayResponseDefault4XX:
+    Type: AWS::ApiGateway::GatewayResponse
+    Properties:
+      ResponseParameters:
+        gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+        gatewayresponse.header.Access-Control-Allow-Headers: "'*'"
+      ResponseType: DEFAULT_4XX
+      RestApiId: !Ref MainAPI
+
+  APIMapping: 
+    Type: AWS::ApiGatewayV2::ApiMapping
+    DependsOn: 
+      - Stage
+    Properties: 
+      ApiId: !Ref MainAPI
+      ApiMappingKey: !Ref project
+      DomainName: 
+        Fn::ImportValue: 
+          !Sub '${infraProject}-ApiDomainName'
+      Stage: !Ref stage
+
+
+Outputs:
+  ApiId:
+    Description: API Id
+    Value: !Ref MainAPI
+    Export:
+      Name: !Sub "${project}-ApiId"
+
+  RootResourceId:
+    Description: Root Resource Id
+    Value: !GetAtt MainAPI.RootResourceId
+    Export:
+      Name: !Sub "${project}-RootResourceId"
+  
+  DefaultAuthorizerId:
+    Description: Authorizer Id
+    Value: !Ref TokenAuthorizer
+    Export:
+      Name: !Sub "${project}-TokenAuthorizerId"
+
+  DefaultAuthorizerName:
+    Description: Authorizer Name
+    Value: TokenAuthorizer
+    Export:
+      Name: !Sub "${project}-TokenAuthorizerName"
+

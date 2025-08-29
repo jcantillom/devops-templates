@@ -1,0 +1,39 @@
+[ 
+    {
+        "ParameterKey": "stage",
+        "ParameterValue": "$(stage)"
+    },
+    {
+        "ParameterKey": "project",
+        "ParameterValue": "$(project)"
+    },
+    {
+        "ParameterKey": "cfBucketName",
+        "ParameterValue": "$(cfBucketName)"
+    },
+    
+    {
+        "ParameterKey": "dbName",
+        "ParameterValue": "$(dbName)"
+    },
+    {
+        "ParameterKey": "rdsInstanceType",
+        "ParameterValue": "$(rdsInstanceType)"
+    }, 
+    {
+        "ParameterKey": "DBAllocatedStorage",
+        "ParameterValue": "$(dbAllocatedStorage)"
+    }, 
+    {
+        "ParameterKey": "engine",
+        "ParameterValue": "$(engine)"
+    }, 
+    {
+        "ParameterKey": "RDSType",
+        "ParameterValue": "$(RDSType)"
+    }, 
+    {
+        "ParameterKey": "kmsARN",
+        "ParameterValue": "$(kmsARN)"
+    }
+]

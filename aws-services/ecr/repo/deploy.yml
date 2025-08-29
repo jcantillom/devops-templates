@@ -1,0 +1,68 @@
+Parameters:
+  stage:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - pdn
+      - uat
+      - qa
+      - dev
+  project:
+    Type: String
+  cfBucketName:
+    Type: String
+  serviceName:
+    Type: String
+    
+Resources:
+
+  ImageRepository:
+    Type: AWS::ECR::Repository
+    Properties: 
+      EncryptionConfiguration: 
+        EncryptionType: KMS
+      ImageScanningConfiguration: 
+        ScanOnPush: True
+      ImageTagMutability: MUTABLE
+      RepositoryName: !Sub 'ecr-${project}-${stage}-${serviceName}'
+      Tags:
+        - Key: Name
+          Value: !Sub 'ecr-${project}-${stage}-${serviceName}'
+
+  ImageVersionSecret:
+    Type: 'AWS::SecretsManager::Secret'
+    Properties:
+      Name: !Sub 'scm-${project}-${stage}-${serviceName}-version'
+      Description: !Sub 'Deployed version for image ecr-${project}-${stage}-${serviceName}'
+      SecretString: '{"version":"latest"}'
+      Tags:
+        - Key: Name
+          Value: !Sub 'scm-${project}-${stage}-${serviceName}-version'
+
+Outputs:
+  imageRepositoryName:
+    Description: Image Repository Name
+    Value: !Ref ImageRepository
+    Export:
+      Name: !Sub '${project}-${serviceName}-imageRepositoryName'
+  imageRepositoryURI:
+    Description: Image Repository URI
+    Value: !GetAtt ImageRepository.RepositoryUri
+    Export:
+      Name: !Sub '${project}-${serviceName}-imageRepositoryURI'
+  imageRepositoryARN:
+    Description: Image Repository ARN
+    Value: !GetAtt ImageRepository.Arn
+    Export:
+      Name: !Sub '${project}-${serviceName}-imageRepositoryARN'
+
+  imageVersionSecretARN:
+    Description: Image Version Secret ARN
+    Value: !Ref ImageVersionSecret
+    Export:
+      Name: !Sub '${project}-${serviceName}-imageVersionSecretARN'
+  imageVersionSecretName:
+    Description: Image Version Secret Name
+    Value: !Sub 'scm-${project}-${stage}-${serviceName}-version'
+    Export:
+      Name: !Sub '${project}-${serviceName}-imageVersionSecretName'

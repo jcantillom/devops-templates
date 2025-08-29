@@ -1,0 +1,36 @@
+jobs:
+  - job: SemgrepScan
+    displayName: 🚨 Semgrep Scan 🚨
+    steps:
+      - task: CmdLine@2
+        displayName: 'Security Testing (Semgrep)'
+        inputs:
+          workingDirectory: $(System.DefaultWorkingDirectory)
+          script: |
+            echo "==================================================="
+            python3 -m pipenv --rm || true
+            echo "Installing Semgrep using python3"
+            python3 -m pipenv --python python3 run pip install semgrep
+            echo "==================================================="
+            echo "Semgrep full scan branch"
+            python3 -m pipenv --python python3 run semgrep --config "p/owasp-top-ten" --sarif --sarif-output=semgrep.sarif
+
+
+      - task: CmdLine@2
+        displayName: 'Verify artifact'
+        inputs:
+          workingDirectory: $(System.DefaultWorkingDirectory)
+          script: |
+            if [ -f "$(System.DefaultWorkingDirectory)/semgrep.sarif" ]; then
+              echo "Arquivo semgrep.sarif encontrado."
+              echo "##vso[task.setvariable variable=ArtifactExists;isOutput=true]true"
+            else
+              echo "Arquivo semgrep.sarif não encontrado."
+              echo "##vso[task.setvariable variable=ArtifactExists;isOutput=true]No"
+            fi
+
+      - task: PublishBuildArtifacts@1
+        condition: eq(variables['ArtifactExists'], 'true')
+        inputs:
+          pathToPublish: $(System.DefaultWorkingDirectory)/semgrep.sarif
+          artifactName: CodeAnalysisLogs

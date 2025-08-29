@@ -1,0 +1,24 @@
+jobs:
+  - job: SonarQubeAnalysis_client
+    displayName: 🛡️Sonarqube Analysis🛡️🚦
+    dependsOn: SonarQubeAnalysis_server
+    condition: not(eq(variables[dependencies.initJob.outputs['init.repoName']],'true'))
+    steps:
+      - template: main.yml
+        parameters:
+          workPath: "${{ parameters.workPath }}/client"
+          testExclusion: "**/coverage/**, **/node_modules/**, **/src/index.js, **/src/index.tsx"
+          testInclusions: "**/**/__tests__/**/*.test.*"
+          repoName: $(Build.Repository.Name)-client
+
+  - job: SonarQubeAnalysis_server
+    displayName: 🛡️Sonarqube Analysis🛡️🚦
+    dependsOn: initJob
+    condition: not(eq(variables[dependencies.initJob.outputs['init.repoName']],'true'))
+    steps:
+      - template: main.yml
+        parameters:
+          workPath: ${{ parameters.workPath }}
+          testExclusion: "**/coverage/**, **/node_modules/**, **/client/**"
+          testInclusions: "**/**/tests/**/*.test.*"
+          repoName: $(Build.Repository.Name)-server

@@ -1,0 +1,130 @@
+steps:   
+  - task: AWSShellScript@1
+    displayName: 'AWS Shell Script - Serverless Deploy'
+    inputs:
+      awsCredentials: $(awsCredentials)
+      regionName: $(region)
+      scriptType: inline
+      inlineScript: |
+
+        echo '
+           __    __     __  __     __         ______   __        _____     ______     ______   __         ______     __  __    
+          /\ "-./  \   /\ \/\ \   /\ \       /\__  _\ /\ \      /\  __-.  /\  ___\   /\  == \ /\ \       /\  __ \   /\ \_\ \   
+          \ \ \-./\ \  \ \ \_\ \  \ \ \____  \/_/\ \/ \ \ \     \ \ \/\ \ \ \  __\   \ \  _-/ \ \ \____  \ \ \/\ \  \ \____ \  
+           \ \_\ \ \_\  \ \_____\  \ \_____\    \ \_\  \ \_\     \ \____-  \ \_____\  \ \_\    \ \_____\  \ \_____\  \/\_____\ 
+            \/_/  \/_/   \/_____/   \/_____/     \/_/   \/_/      \/____/   \/_____/   \/_/     \/_____/   \/_____/   \/_____/ 
+                                                                                                                                                                                                                                                                                                
+        '
+        echo "========================================== Historial con los últimos 5 cambios ================================="
+        git log
+        
+        prevCommitSHA=$(git rev-parse HEAD~1)
+        currentCommitSHA=$(git rev-parse HEAD~0) 
+        command=$(git diff --name-only $prevCommitSHA $currentCommitSHA)
+
+        echo "========================================== Archivos que cambiaron =============================================="
+        echo $command
+
+        pattern="serverless.yml"
+        serverless_list=$(find . -name "serverless.yml*")
+        onlyCross=0
+        var=$( IFS=$'\n'; echo "${serverless_list[*]}" )
+        var2=$(grep -oP '(?<=./).*?(?=serverless.yml)' <<< "$var")   
+        onlyCross=0 
+        errors=0
+        root_agent_path=$(pwd)
+        echo "========================================= root path actual agente azure devops ================================="
+        echo $root_agent_path
+        echo "========================================== Paths con archivos serverless.yml ==================================="    
+        echo $var2       
+        folders_path=()
+        error_files=()
+        for i in $command; do     
+            for a in $var2; do
+
+                if [[ ${i} == *"${a}"* ]]; then 
+                    onlyCross=0
+                    folders_path+=(${a})
+                    break
+                else
+                    onlyCross=1
+                fi
+            done;
+
+            if [[ ${onlyCross} == 1 ]]; then 
+                break 2
+            fi
+        done;
+
+
+        if [[ $onlyCross == 0 ]]; then
+            echo "NO TIENE ARCHIVOS TRANSVERSALES"
+            echo "Carpetas con archivos serverless yml que tuvieron cambios: ${folders_path[@]}"
+            for i in ${folders_path[@]}; do    #Acá estamos entrando al directorio donde está el serverless y desplegando, siempre y cuando no se haya
+                echo "========================================== Desplegando archivo... ===================================="
+                echo ${i}            
+                path=${i}
+                echo "path : $path"
+                echo "PWD actual : $PWD"
+                cd $path
+                echo $PWD
+                vars="npx $(serverlessFullVersion) deploy --stage $(stage)"
+                $vars
+                if [ $? -eq 0 ]; then
+                  if [ $errors == 1 ]; then
+                      errors=1
+                  else
+                      errors=0
+                  fi
+                else
+                    errors=1
+                    error_files+=(${i})
+                fi
+                echo "PWD : $PWD"
+                cd $root_agent_path         #Descomentar para Azure DevOps
+                #cd ../..     # Comentar para Azure DevOps
+            done;
+
+        else
+            echo "SI TIENE ARCHIVOS TRANSVERSALES"
+            serverless_files=$(find . -name "${pattern}*")
+            echo "========================================== Serverless files path =================================="
+            echo $serverless_files
+            sub_string="node_modules"            
+            for i in $serverless_files; do
+                if [[ ${i} != *"${sub_string}"* ]]; then 
+                    
+                  echo "========================================== Desplegando archivo... ===================================="
+                  echo ${i}            # cambiado Un archivo transversal
+                  echo "PWD actual : $PWD"
+                  cd $(dirname ${i})
+                  vars="npx $(serverlessFullVersion) deploy --stage $(stage)"
+                  $vars
+                  if [ $? -eq 0 ]; then
+                    if [ $errors == 1 ]; then
+                        errors=1
+                    else
+                        errors=0
+                    fi
+                  else
+                      errors=1
+                      error_files+=(${i})
+                  fi
+                  #cd ../..
+                  echo "PWD : $PWD"
+                  cd $root_agent_path
+
+                fi
+
+            done;
+
+        fi
+
+        if [ $errors == 1 ]; then
+            echo "===================================== Hubo errores en la ejecución de los despliegues ===================="
+            echo ${error_files[@]}
+            exit 125
+        fi
+
+      disableAutoCwd: true
+      workingDirectory: "${{parameters.workPath}}"

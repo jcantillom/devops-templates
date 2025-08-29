@@ -1,0 +1,14 @@
+steps:
+  - task: replace-variables-in-file@1
+    displayName: Set parameters values file:env server
+    inputs:
+      filepath: "${{ parameters.workPath }}/.env"
+      endWithNewLine: true
+      verbose: true
+
+  - task: replace-variables-in-file@1
+    displayName: Set parameters values file:env client
+    inputs:
+      filepath: "${{ parameters.workPath }}/client/.env"
+      endWithNewLine: true
+      verbose: true

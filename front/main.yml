@@ -1,0 +1,68 @@
+jobs:
+  - job: build_upload
+    displayName: Build and Upload project
+    steps:
+      # replace
+      - task: replace-variables-in-file@1
+        displayName: "Replace .env variables"
+        inputs:
+          filepath: "${{ parameters.workPath }}/.env"
+          endWithNewLine: true
+          verbose: true
+      # install
+      - task: CmdLine@2
+        displayName: "Install project"
+        inputs:
+          script: |
+            source ~/.bash_profile
+            nvm use $(nodeVersion)
+            echo "======================================================"
+            rm -rf node_modules package-lock.json
+            npm cache clean --force
+            npm cache verify
+            npm update
+            echo "installing code"
+            npm install --force
+          workingDirectory: ${{ parameters.workPath }}
+      # build
+      - task: CmdLine@2
+        displayName: "Build project"
+        inputs:
+          script: |
+            echo "======================================================"
+            echo "building code"
+            npm run build
+          workingDirectory: ${{ parameters.workPath }}
+      
+      # clean $(frontPath)/static
+      - task: AWSShellScript@1
+        displayName: "Clean static files"
+        inputs:
+          awsCredentials: $(awsCredentials)
+          regionName: $(region)
+          scriptType: "inline"
+          inlineScript: "aws s3 rm s3://$(frontBucket)/$(frontPath)/static --recursive"
+      # upload file
+      - task: S3Upload@1
+        displayName: "Upload files"
+        inputs:
+          awsCredentials: $(awsCredentials)
+          regionName: $(region)
+          bucketName: $(frontBucket)
+          sourceFolder: ${{ parameters.workPath }}/build
+          targetFolder: $(frontPath)
+          globExpressions: "**"
+  
+  # force deploy cloudfront (invalidation / continuous deployment / aws cli) ?
+  # - job: cloudfront_deploy
+  #   dependsOn: build_upload
+  #   displayName: CloudFront deploy
+  #   steps:
+  #     - task: CmdLine@2
+  #       displayName: "Deploy project"
+  #       inputs:
+  #         script: |
+  #           echo "======================================================"
+  #           echo "Not implemented yet"
+  #           echo "======================================================"
+  #         workingDirectory: ${{ parameters.workPath }}

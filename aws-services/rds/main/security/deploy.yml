@@ -1,0 +1,45 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: CloudFormation Template for create an Secret for db credentials.
+Parameters:
+  stage:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - pdn
+      - uat
+      - qc
+      - dev
+  project:
+    Type: String
+  UsernameAdmindb:
+    Type: String
+    Default: "Administratordb"
+Resources:
+  DBCredentialsSecret:
+    Type: 'AWS::SecretsManager::Secret'
+    Properties:
+      Name: !Sub 'scm-${project}-${stage}-db-credentials'
+      Description: >-
+        Este secreto es de uso EXCLUSIVO de los administradores, para obtener
+        acceso a esta base de datos por favor realiza una solicitud para que se
+        te cree un usuario con los permisos especificos requeridos
+      GenerateSecretString:
+        SecretStringTemplate:
+          Fn::Sub:
+            - '{"username": "${UsernameAdmindb}"}'
+            - username:
+                Ref: UsernameAdmindb
+        GenerateStringKey: password
+        PasswordLength: 16
+        ExcludeCharacters: '"@/\'
+      Tags:
+        - Key: Name
+          Value: !Sub 'scm-${project}-${stage}-db-credentials'
+
+Outputs:
+  DBCredentialsSecretARN:
+    Description: DB Credentials Secret ARN.
+    Value: !Ref DBCredentialsSecret
+  DBCredentialsSecretName:
+    Description: DB Credentials Secret Name
+    Value: !Sub 'secm-${project}-${stage}-db-credentials'

@@ -1,0 +1,174 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: CloudFormation Api WebSocket.
+Parameters:
+  stage:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - pdn
+      - uat
+      - qc
+      - dev
+  project:
+    Type: String
+  cfBucketName:
+    Type: String
+  infraProject:
+    Type: String
+  authHeaderName:
+    Type: String
+    Default: Authorization
+
+Resources:
+
+  WebSocketApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub 'websocket-${project}-${stage}-private'
+      Description: !Sub 'WebSocket to ${project}'
+      ProtocolType: WEBSOCKET
+      RouteSelectionExpression: "$request.body.action"
+      DisableExecuteApiEndpoint: true
+  
+  WebSocketAuthorizer:
+    Type: AWS::ApiGatewayV2::Authorizer
+    Properties: 
+      Name: WebSocketAuthorizer
+      ApiId: !Ref WebSocketApi
+      AuthorizerType: REQUEST
+      AuthorizerUri: !Sub 
+        - 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${AuthorizerLambdaARN}/invocations'
+        - AuthorizerLambdaARN: 
+            Fn::ImportValue: 
+              !Sub '${infraProject}-AuthorizerLambdaARN'
+      IdentitySource: 
+        - !Sub "route.request.querystring.${authHeaderName}"
+        - route.request.querystring.action
+    
+  ConnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: $connect
+      AuthorizationType: CUSTOM
+      AuthorizerId: !Ref WebSocketAuthorizer
+      OperationName: ConnectRoute
+      Target: !Join
+        - '/'
+        - - 'integrations'
+          - !Ref ConnectInteg
+  ConnectInteg:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref WebSocketApi
+      Description: Connect Integration
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub 
+        - 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${OnConnectLambdaARN}/invocations'
+        - OnConnectLambdaARN: 
+            Fn::ImportValue: 
+              !Sub '${infraProject}-OnConnectLambdaARN'
+  ConnectPermission:
+    Type: AWS::Lambda::Permission
+    DependsOn:
+      - WebSocketApi
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: 
+        Fn::ImportValue: 
+          !Sub '${infraProject}-OnConnectLambdaName'
+      Principal: apigateway.amazonaws.com
+
+  DisconnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: $disconnect
+      AuthorizationType: NONE
+      OperationName: DisconnectRoute
+      Target: !Join
+        - '/'
+        - - 'integrations'
+          - !Ref DisconnectInteg
+  DisconnectInteg:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref WebSocketApi
+      Description: Disconnect Integration
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub 
+        - 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${OnDisconnectLambdaARN}/invocations'
+        - OnDisconnectLambdaARN: 
+            Fn::ImportValue: 
+              !Sub '${infraProject}-OnDisconnectLambdaARN'
+  DisconnectPermission:
+    Type: AWS::Lambda::Permission
+    DependsOn:
+      - WebSocketApi
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: 
+        Fn::ImportValue: 
+          !Sub '${infraProject}-OnDisconnectLambdaName'
+      Principal: apigateway.amazonaws.com
+
+  WebSocketLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: 
+      LogGroupName: !Sub '/aws/apigateway/websocket-${project}-${stage}-private'
+
+  Deployment:
+    Type: AWS::ApiGatewayV2::Deployment
+    DependsOn:
+    - ConnectRoute
+    - DisconnectRoute
+    Properties:
+      ApiId: !Ref WebSocketApi
+
+  Stage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      StageName: !Ref stage
+      Description: !Sub '${stage} stage'
+      DeploymentId: !Ref Deployment
+      ApiId: !Ref WebSocketApi
+      DefaultRouteSettings:
+        DetailedMetricsEnabled: true
+        LoggingLevel: INFO
+        DataTraceEnabled: false
+      AccessLogSettings:
+        DestinationArn: !GetAtt WebSocketLogGroup.Arn
+        Format: '{
+            "requestId":"$context.requestId", 
+            "ip": "$context.identity.sourceIp",
+            "caller":"$context.identity.caller",
+            "user":"$context.identity.user",
+            "requestTime":"$context.requestTime",
+            "eventType":"$context.eventType",
+            "routeKey":"$context.routeKey",
+            "status":"$context.status",
+            "connectionId":"$context.connectionId"
+          }'
+      Tags:
+        Name: !Sub "apigw-stage-${stage}"
+
+  APIMapping: 
+    Type: AWS::ApiGatewayV2::ApiMapping
+    DependsOn: 
+      - Stage
+    Properties: 
+      ApiId: !Ref WebSocketApi
+      ApiMappingKey: !Ref project
+      DomainName: 
+        Fn::ImportValue: 
+          !Sub '${infraProject}-WebsocketDomainName'
+      Stage: !Ref stage
+
+
+Outputs:
+  WebSocketApiId:
+    Description: WebSocketApi Id
+    Value: !Ref WebSocketApi
+    Export:
+      Name: !Sub "${project}-WebSocketApiId"
+

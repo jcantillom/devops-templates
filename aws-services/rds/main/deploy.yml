@@ -1,0 +1,208 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: CloudFormation RDS PostgreSQL and Secrets Manager.
+Parameters:
+  stage:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - pdn
+      - uat
+      - qc
+      - dev
+  project:
+    Type: String
+  cfBucketName:
+    Type: String
+  dbName:
+    Type: String
+  RDSType: 
+    Type: String
+    Default: aurora 
+    AllowedValues: 
+      - 'aurora'
+      - 'no-aurora'
+  DBAllocatedStorage:
+    Default: "20"
+    Description: The size of the database (GiB)
+    Type: Number
+    MinValue: "20"
+    MaxValue: "1024"
+    ConstraintDescription: must be between 20 and 65536 GiB.
+  rdsInstanceType:
+    Type: String
+    Description: Clase (size) de la base de datos
+    Default: db.t3.micro
+    AllowedValues:
+      - db.t3.micro
+      - db.t3.small
+      - db.t3.medium
+      - db.r5.large
+      - db.r5.xlarge
+      - db.r5.2xlarge
+      - db.r5.4xlarge
+      - db.r5.12xlarge
+      - db.r4.large
+      - db.r4.xlarge
+      - db.r4.2xlarge
+      - db.r4.4xlarge
+      - db.r4.8xlarge
+  engine:
+    Description: 'Aurora engine and version'
+    Type: String
+    AllowedValues:
+      - '8.0.mysql-aurora.3.06.0' # aws rds describe-db-engine-versions --engine aurora-mysql --query 'DBEngineVersions[?contains(SupportedEngineModes,`provisioned`)].EngineVersion'
+      - '8.0.mysql-aurora.3.05.2'
+      - '8.0.mysql-aurora.3.04.2'
+      - '8.0.mysql-aurora.3.03.3'
+      - '5.7.mysql-aurora.2.12.2'
+      - '5.7.mysql-aurora.2.11.5'
+      - '5.7.mysql-aurora.2.10.1'
+      - '5.7.mysql-aurora.2.07.10'
+      - 'aurora-postgresql-16.2' # aws rds describe-db-engine-versions --engine aurora-postgresql --query 'DBEngineVersions[?contains(SupportedEngineModes,`provisioned`)].EngineVersion'
+      - 'aurora-postgresql-15.6' 
+      - 'aurora-postgresql-15.4' 
+      - 'aurora-postgresql-15.3'
+      - 'aurora-postgresql-15.2'
+      - 'aurora-postgresql-14.11'
+      - 'aurora-postgresql-13.14'
+      - 'aurora-postgresql-12.18'
+      - 'aurora-postgresql-11.21'
+      - 'postgresql-15.4'
+      - 'postgresql-14.3'
+      - 'postgresql-13.12'
+      - 'postgresql-12.16'
+      - 'postgresql-11.21'
+  kmsARN:
+    Type: String
+
+Mappings:
+  EngineMapPort:
+    '8.0.mysql-aurora.3.06.0':
+      Port: 3306
+    '8.0.mysql-aurora.3.05.2':
+      Port: 3306
+    '8.0.mysql-aurora.3.04.2':
+      Port: 3306
+    '8.0.mysql-aurora.3.02.1':
+      Port: 3306
+    '5.7.mysql-aurora.2.12.2':
+      Port: 3306
+    '5.7.mysql-aurora.2.11.5':
+      Port: 3306
+    '5.7.mysql-aurora.2.10.1':
+      Port: 3306
+    '5.7.mysql-aurora.2.07.10':
+      Port: 3306
+    'aurora-postgresql-16.2':
+      Port: 5432
+    'aurora-postgresql-15.6':
+      Port: 5432
+    'aurora-postgresql-15.4':
+      Port: 5432
+    'aurora-postgresql-15.3':
+      Port: 5432
+    'aurora-postgresql-15.2':
+      Port: 5432
+    'aurora-postgresql-14.11':
+      Port: 5432
+    'aurora-postgresql-13.14':
+      Port: 5432
+    'aurora-postgresql-12.18':
+      Port: 5432
+    'aurora-postgresql-11.21':
+      Port: 5432
+    'postgresql-15.4': 
+      Port: 5432
+    'postgresql-14.3': 
+      Port: 5432
+    'postgresql-13.12': 
+      Port: 5432
+    'postgresql-12.16': 
+      Port: 5432
+    'postgresql-11.21': 
+      Port: 5432
+
+Conditions:
+  isCluster: !Equals [!Ref RDSType, 'aurora']
+
+
+Resources:
+
+  DBSecret:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://s3.amazonaws.com/${cfBucketName}/${project}/rds/main/security/deploy.yml
+      Parameters:
+        stage: !Ref stage
+        project: !Ref project
+
+  DBSubSG:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://s3.amazonaws.com/${cfBucketName}/${project}/rds/main/networking/deploy.yml
+      Parameters:
+        stage: !Ref stage
+        project: !Ref project
+        dbPort: !FindInMap [EngineMapPort, !Ref engine, Port]    
+
+  DatabaseDeployment:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://s3.amazonaws.com/${cfBucketName}/${project}/rds/main/engine/${RDSType}.yml
+      Parameters:
+        stage: !Ref stage
+        project: !Ref project
+        dbName: !Ref dbName
+        DBAllocatedStorage: !Ref DBAllocatedStorage
+        rdsInstanceType: !Ref rdsInstanceType
+        dbCredentialsSecretARN: !GetAtt DBSecret.Outputs.DBCredentialsSecretARN
+        dbSubnetGroup: !GetAtt DBSubSG.Outputs.DBSubnetGroup
+        dbSecurityGroupGroupId: !GetAtt DBSubSG.Outputs.GroupId
+        dbPort: !FindInMap [EngineMapPort, !Ref engine, Port]
+        Engine: !Ref engine
+        kmsARN: !Ref kmsARN
+
+Outputs:
+  DBCredentialsSecretARN:
+    Description: DB Credentials Secret ARN.
+    Value: !GetAtt DBSecret.Outputs.DBCredentialsSecretARN
+    Export:
+      Name: !Sub "${project}-DBCredentialsSecretARN"
+  
+  DBCredentialsSecretName:
+    Description: DB Credentials Secret Name
+    Value: !GetAtt DBSecret.Outputs.DBCredentialsSecretName
+    Export:
+      Name: !Sub "${project}-DBCredentialsSecretName"
+  
+  DBSecurityGroup:
+    Description: DB DBSecurityGroup
+    Value: !GetAtt DBSubSG.Outputs.DBSecurityGroup
+    Export:
+      Name: !Sub "${project}-DBSecurityGroup"
+  
+  DBSubnetGroup:
+    Description: DB DBSubnetGroup
+    Value: !GetAtt DBSubSG.Outputs.DBSubnetGroup
+    Export:
+      Name: !Sub "${project}-DBSubnetGroup"
+  
+  DBCluster:
+    Description: RDS DBCluster
+    Value: !GetAtt DatabaseDeployment.Outputs.DBCluster
+    Condition: isCluster
+    Export:
+      Name: !Sub "${project}-DBCluster"
+
+  DBAddress:
+    Description: RDS DBAddress
+    Value: !GetAtt DatabaseDeployment.Outputs.DBAddress
+    Export:
+      Name: !Sub "${project}-DBAddress"
+  
+  DBPort:
+    Description: RDS DBPort
+    Value: !GetAtt DatabaseDeployment.Outputs.DBPort
+    Condition: isCluster
+    Export:
+      Name: !Sub "${project}-DBPort"

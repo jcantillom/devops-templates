@@ -1,0 +1,27 @@
+
+jobs:
+  - job: RunPSqlScripts
+    displayName: Run Sql Scripts
+    steps:
+      - checkout: devops-templates
+        displayName: 'Fetch devops template repository'
+
+      - checkout: self
+        path: origin-repo
+
+      - script: |
+          ls /usr/bin/python*
+          python --version
+          python3.8 -m pipenv --rm
+          python3.8 -m pipenv --python 3.8 run pip install psycopg2-binary==2.9.3 boto3==1.26.71
+        displayName: "Install requirements psycopg2-binary and boto3"
+        workingDirectory: $(System.DefaultWorkingDirectory)/devops-templates
+
+      - task: AWSShellScript@1
+        displayName: "Run python sql with secret"
+        inputs:
+          awsCredentials: $(awsCredentials)
+          regionName: $(region)
+          scriptType: inline
+          inlineScript: |
+            python3.8 -m pipenv --python 3.8 run python devops-templates/sql/run_sql.py "$(secretUser)" "$(secretMaster)" "$(Agent.BuildDirectory)/origin-repo"

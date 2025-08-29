@@ -1,0 +1,127 @@
+steps:
+  - task: AWSShellScript@1
+    displayName: "Stack tags validation"
+    inputs:
+      awsCredentials: $(awsCredentials)
+      regionName: $(region)
+      scriptType: inline
+      inlineScript: |
+        RED='\033[0;31m'
+        GREEN='\033[0;32m'
+        YELLOW='\033[1;33m'
+        NC='\033[0m'
+
+        cat << EOM
+        $(echo -e "${RED} 
+         ______   ______     ______        __   __   ______     __         __     _____     ______     ______   ______     ______    
+        /\__  _\ /\  __ \   /\  ___\      /\ \ / /  /\  __ \   /\ \       /\ \   /\  __-.  /\  __ \   /\__  _\ /\  __ \   /\  == \   
+        \/_/\ \/ \ \  __ \  \ \ \__ \     \ \ \'/   \ \  __ \  \ \ \____  \ \ \  \ \ \/\ \ \ \  __ \  \/_/\ \/ \ \ \/\ \  \ \  __<   
+           \ \_\  \ \_\ \_\  \ \_____\     \ \__|    \ \_\ \_\  \ \_____\  \ \_\  \ \____-  \ \_\ \_\    \ \_\  \ \_____\  \ \_\ \_\ 
+            \/_/   \/_/\/_/   \/_____/      \/_/      \/_/\/_/   \/_____/   \/_/   \/____/   \/_/\/_/     \/_/   \/_____/   \/_/ /_/ 
+                                   
+        ${NC}")
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        
+        EOM
+
+        ambiente_values="dev; qc; uat; pdn"
+        disponibilidad_values="LU-VI-06:00-18:00; LU-VI-06:00-20:00; LU-VI-06:00-22:00; LU-VI-06:00-02:00; LU-VI-06:00-02:00-SA-D0-06:00-19:00; LU-DO-24:00; LU-VI-06:00-18:00-SA-DO-16:00-18:00; LU,MI,VI-06:00-18:00"
+        celula_values="Inversiones y ALM; Canales y Distribucion; Regulatorios y FPV; Activos y Pasivos; Medios de Pago; Desarrollo Transversal; Equipo Negocio; Infraestructura"
+        despliegue_values="Terraform; Cloudformation; Consola; ServerlessFramework"
+        aplicativo_values="ACH; Adaptor PTS; Alianza Derivados; Alliance Access BRA; Alliance Access CO; Alliensoft SCB; AML HUB Listas restrictivas; API Regulatorios; Aplicacion de Marketing; App Digital - Android; App Digital - Ios; ARCHER; ARM - Fluid; Autogestion Documental; Automatizacion de Cargas BDC; Autotools; Axiom - Controller View; Base de Datos Regulatorios; Base de Valoracion; BDC; Bloomberg; BTG FX; BTG Launcher; Calypso; Cargas BDC Banco; CargasBDC; ccbdc; cdncol; Certicamara; Chile Regulatorios; CIFIN; Cifras de Control de la BDC; Climb; Confirmaciones de Pagos; CRCC; CROS; Dashboard Canales Digitales; Deceval; Deltix; Docusign; Dominus; Electronic Trading; Encuenta; Eventos de Marketing; Facturacion Electronica; Fusion; Formulario de Practicas; FSEND - Top Point; FSEND - Top Point Banco; FTS; Galileo; Generador de Extractos; H2H; Icnea; IDV - OneSpan; IFRS - XBRL - Dbnet; Indicadores de Regulatorios; Infolaft; Infovalmer; Instructivo de la APP; Instructivo de los Portales; Invoway; Jotform; LESS Br; LESS Co; Maestros Unicos; Mambu; MARS; Master Trader; Mec Back-Office; Mercamsoft BCO; Mercamsoft SCB; Midasoft BCO; Midasoft Commodities; Midasoft Laurel; Midasoft SCB; Midasoft SCB - Viejo; Midasoft SF; Midasoft SMP - Estrategia y Desarrollo SAS; Minmambu; Numrot; OMS; OTP; OTP Brasil; OwnCloud Pensiones; OyD; OyD Autorizaciones; Ozono; Pagina Web; Pagos en Lote; Persona Relacionada; PIP; Place to Pay; Portal Asesores; Portal de Pagos BTG; Portal DIAN; Portal Docs; Portal Persona Juridica; Portal Persona Natural; Portal Research; Portal Transaccional - OLD; Portal UIAF; Portales Digitales; PQR; Previsiona; Prisma Cloud; PSE; PWP; RAS; Reuters; Revelaciones; RTB Col; RTB Pensiones; RTBTools; SAE Complementacion Automatica; SAG; SAP; SEBRA; SEN; Set FX; SFC - SIRI; SGN; Sonar; SPT Link SCB; Stradata; Suitability; SUMI; Swift; Umbrella; Unity BCO; Unity Credito; Unity Credito BCO; Unity SCB; URO; Valhalla; Vigia; Vive al Dia BTG; XW; Notificaciones"
+        compania_values="Banco; Comisionista; Fiduciaria; Transversal"
+        area_values="COMPLIANCE; CORPORATE AFFAIRS; FICC & EQUITIES; FINANCE; FUND SERVICES; HUMAN RESOURCES; IBD; INTERNAL AUDIT; LEGAL; MARKETING & EVENTS; OPERATIONS; RISK MANAGEMENT; SENIOR MANAGEMENT; STRATEGIC TRANSFORMATION; TECHNOLOGY; WEALTH MANAGEMENT; AM"
+        producto_values="Cuenta Corriente; CDT; Credito; Divisas; Derivados; Cartera; Ops de Mercado Monetario; Renta Fija;Renta Variable; FIC; APTs; FVP; FIPA; Negocios Fiduciarios;Transversal"
+
+        function validate_tag() {
+
+          if [ $? -eq 0 ]; then
+
+            tag_name=$1
+            tag_allowed_values=$2
+            tag_value=$3
+
+            echo "Sí existe el tag: $tag_name"
+            echo "Valores permitidos: $tag_allowed_values"
+            echo "Valor del tag: $tag_value"
+
+            if exists_in_list "$tag_allowed_values" ";" "$tag_value"; then
+              echo -e "${GREEN}Tag de $tag_name configurado correctamente${NC}"
+            else
+              echo -e "${RED}Tag de $tag_name no es uno de los valores permitidos${NC}"
+              #exit 125
+            fi
+
+          else
+
+            tag_name=$1
+
+            echo -e "${RED}Tag $tag_name no encontrado en variables del serverless${NC}"
+            #exit 125
+          fi
+
+        }
+
+        function exists_in_list() {
+            LIST=$1
+            DELIMITER=$2
+            VALUE=$3
+            
+            IFS=$DELIMITER
+            for x in $LIST; do
+                x_no_left_space="$(echo -e "${x}" | sed -e 's/^[[:space:]]*//')"
+
+                if [ "$x_no_left_space" = "$VALUE" ]; then
+                    return 0
+                fi
+
+            done
+            return 1
+        }
+
+        export SLS_WARNING_DISABLE=*
+        export SLS_DEPRECATION_DISABLE=*
+
+        echo "======================================================="
+        if [ -z "$(serverlessFile)" ];then
+              json_tags=$(SLS_WARNING_DISABLE='*' SLS_DEPRECATION_DISABLE='*' npx $(serverlessFullVersion) print --path provider.stackTags --format json --stage $(stage))
+        else
+              json_tags=$(SLS_WARNING_DISABLE='*' SLS_DEPRECATION_DISABLE='*' npx $(serverlessFullVersion) print --path provider.stackTags --format json --stage $(stage) --config $(serverlessFile))
+        fi
+
+        echo "==================== Ambiente=========================="
+        Ambiente=$(echo $json_tags | grep -o '"Ambiente": "[^"]*' | grep -o '[^"]*$')
+        validate_tag Ambiente "$ambiente_values" $Ambiente
+
+        echo "================== Disponibilidad ====================="
+        Disponibilidad=$(echo $json_tags | grep -o '"Disponibilidad": "[^"]*' | grep -o '[^"]*$')
+        validate_tag Disponibilidad "$disponibilidad_values" $Disponibilidad
+
+        echo "===================== Celula =========================="
+        Celula=$(echo $json_tags | grep -o '"Celula": "[^"]*' | grep -o '[^"]*$')
+        validate_tag Celula "$celula_values" $Celula   
+
+        echo "==================== Despliegue ======================="
+        Despliegue=$(echo $json_tags | grep -o '"Despliegue": "[^"]*' | grep -o '[^"]*$')
+        validate_tag Despliegue "$despliegue_values" $Despliegue
+
+        echo "==================== Aplicativo ======================="
+        Aplicativo=$(echo $json_tags | grep -o '"Aplicativo": "[^"]*' | grep -o '[^"]*$')
+        validate_tag Aplicativo "$aplicativo_values" $Aplicativo
+
+        echo "===================== Compañia ========================"
+        Compania=$(echo $json_tags | grep -o '"Compania": "[^"]*' | grep -o '[^"]*$')
+        validate_tag Compania "$compania_values" $Compania
+
+        echo "====================== Area ==========================="
+        Area=$(echo $json_tags | grep -o '"Area": "[^"]*' | grep -o '[^"]*$')
+        validate_tag Area "$area_values" $Area
+
+        echo "====================== Producto ======================"
+        Producto=$(echo $json_tags | grep -o '"Producto": "[^"]*' | grep -o '[^"]*$')
+        validate_tag Producto "$producto_values" $Producto
+
+        echo "======================================================"
+        echo -e "${YELLOW} IMPORTANTE - En los próximos días esta tarea actuará como breaker si no están los tags correctamente configurados${NC}"
+
+      disableAutoCwd: true
+      workingDirectory: "${{parameters.workPath}}"

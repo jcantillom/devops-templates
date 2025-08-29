@@ -1,0 +1,75 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: CloudFormation WebACL and IPSet WAF.
+Parameters:
+  stage:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - pdn
+      - uat
+      - qc
+      - dev
+  project:
+    Type: String
+  cfBucketName:
+    Type: String
+  
+Resources:
+
+  whiteListIPSet:
+    Type: AWS::WAFv2::IPSet
+    Properties:
+      Description: IP Set to whitelist intern ips
+      Name: !Sub 'ipset-${project}-${stage}-intern'
+      Scope: CLOUDFRONT
+      IPAddressVersion: IPV4
+      Addresses:
+        - 190.131.240.114/32
+        - 190.216.157.114/32
+        - 190.131.252.99/32
+
+  cloudFrontWebACL:
+    Type: AWS::WAFv2::WebACL
+    Properties:
+      Name: !Sub 'wacl-${project}-${stage}-cloudfront-intern'
+      Description: WebACL WAF to Distributions CloudFront 
+      Scope: CLOUDFRONT
+      DefaultAction:
+        Block:
+          CustomResponse:
+            ResponseCode: 503
+      VisibilityConfig: 
+        SampledRequestsEnabled: false
+        CloudWatchMetricsEnabled: true
+        MetricName: !Sub 'wacl-${project}-${stage}-cf-intern-metric'
+      Rules:
+        - Name: !Sub 'wacl-${project}-${stage}-cf-intern-rule-whitelist'
+          Priority: 0
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: !Sub 'wacl-${project}-${stage}-cf-rule-whitelist-metric'
+          Action:
+            Allow: {}
+          Statement:
+            IPSetReferenceStatement:
+              Arn: !GetAtt whiteListIPSet.Arn
+
+Outputs:
+  whiteListIPSetARN:
+    Description: whiteListIPSet ARN.
+    Value: !GetAtt whiteListIPSet.Arn
+    Export:
+      Name: !Sub "${project}-WhiteListIPSetARN"
+  
+  cloudFrontWebACLARN:
+    Description: cloudFrontWebACL ARN
+    Value: !GetAtt cloudFrontWebACL.Arn
+    Export:
+      Name: !Sub "${project}-CloudFrontWebACLARN"
+  
+  cloudFrontWebACLID:
+    Description: cloudFrontWebACL ID
+    Value: !GetAtt cloudFrontWebACL.Id
+    Export:
+      Name: !Sub "${project}-CloudFrontWebACLID"

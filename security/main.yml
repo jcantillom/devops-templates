@@ -1,0 +1,5 @@
+stages: 
+- stage: Security
+  jobs:
+    #- template: semgrep/main.yml@devops-templates
+    - template: checkmarx/main.yml@devops-templates

@@ -1,0 +1,235 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: CloudFormation Template for create a PostgresSQL DB.
+Parameters:
+  stage:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - pdn
+      - uat
+      - qc
+      - dev
+  project:
+    Type: String
+  dbName:
+    Type: String
+  dbPort:
+    Type: Number
+    Description: Database port
+  DBAllocatedStorage:
+    Default: '20'
+    Description: The size of the database (GiB)
+    Type: Number
+    MinValue: '20'
+    MaxValue: '1024'
+    ConstraintDescription: must be between 20 and 65536 GiB.
+  rdsInstanceType:
+    Type: String
+    Description: Clase (size) de la base de datos
+  dbCredentialsSecretARN:
+    Type: String
+  dbSubnetGroup:
+    Type: String
+  dbSecurityGroupGroupId:
+    Type: String
+  PreferredBackupWindow:
+    Description: 'The daily time range in UTC during which you want to create automated backups.'
+    Type: String
+    Default: '02:00-03:00'
+  PreferredMaintenanceWindow:
+    Description: 'The weekly time range (in UTC) during which system maintenance can occur.'
+    Type: String
+    Default: 'sun:03:00-sun:04:00'
+  Engine:
+    Description: 'Aurora engine and version'
+    Type: String
+  kmsARN:
+    Type: String
+
+Mappings:
+  EngineMap:
+    '8.0.mysql-aurora.3.06.0':
+      Engine: 'aurora-mysql'
+      EngineVersion: '8.0.mysql_aurora.3.06.0'
+      ClusterParameterGroupFamily: 'aurora-mysql8.0'
+      ParameterGroupFamily: 'aurora-mysql8.0'
+    '8.0.mysql-aurora.3.05.2':
+      Engine: 'aurora-mysql'
+      EngineVersion: '8.0.mysql_aurora.3.05.2'
+      ClusterParameterGroupFamily: 'aurora-mysql8.0'
+      ParameterGroupFamily: 'aurora-mysql8.0'
+    '8.0.mysql-aurora.3.04.2':
+      Engine: 'aurora-mysql'
+      EngineVersion: '8.0.mysql_aurora.3.04.2'
+      ClusterParameterGroupFamily: 'aurora-mysql8.0'
+      ParameterGroupFamily: 'aurora-mysql8.0'
+    '8.0.mysql-aurora.3.03.3':
+      Engine: 'aurora-mysql'
+      EngineVersion: '8.0.mysql_aurora.3.03.3'
+      ClusterParameterGroupFamily: 'aurora-mysql8.0'
+      ParameterGroupFamily: 'aurora-mysql8.0'
+    '5.7.mysql-aurora.2.12.2':
+      Engine: 'aurora-mysql'
+      EngineVersion: '5.7.mysql_aurora.2.12.2'
+      ClusterParameterGroupFamily: 'aurora-mysql5.7'
+      ParameterGroupFamily: 'aurora-mysql5.7'
+    '5.7.mysql-aurora.2.11.5':
+      Engine: 'aurora-mysql'
+      EngineVersion: '5.7.mysql_aurora.2.11.5'
+      ClusterParameterGroupFamily: 'aurora-mysql5.7'
+      ParameterGroupFamily: 'aurora-mysql5.7'
+    '5.7.mysql-aurora.2.10.1':
+      Engine: 'aurora-mysql'
+      EngineVersion: '5.7.mysql_aurora.2.10.1'
+      ClusterParameterGroupFamily: 'aurora-mysql5.7'
+      ParameterGroupFamily: 'aurora-mysql5.7'
+    '5.7.mysql-aurora.2.07.10':
+      Engine: 'aurora-mysql'
+      EngineVersion: '5.7.mysql_aurora.2.07.10'
+      ClusterParameterGroupFamily: 'aurora-mysql5.7'
+      ParameterGroupFamily: 'aurora-mysql5.7'
+    'aurora-postgresql-16.2':
+      Engine: 'aurora-postgresql'
+      EngineVersion: '16.2'
+      ClusterParameterGroupFamily: 'aurora-postgresql16'
+      ParameterGroupFamily: 'aurora-postgresql16'
+    'aurora-postgresql-15.6':
+      Engine: 'aurora-postgresql'
+      EngineVersion: '15.6'
+      ClusterParameterGroupFamily: 'aurora-postgresql15'
+      ParameterGroupFamily: 'aurora-postgresql15'
+    'aurora-postgresql-15.4':
+      Engine: 'aurora-postgresql'
+      EngineVersion: '15.4'
+      ClusterParameterGroupFamily: 'aurora-postgresql15'
+      ParameterGroupFamily: 'aurora-postgresql15'
+    'aurora-postgresql-15.3':
+      Engine: 'aurora-postgresql'
+      EngineVersion: '15.3'
+      ClusterParameterGroupFamily: 'aurora-postgresql15'
+      ParameterGroupFamily: 'aurora-postgresql15'
+    'aurora-postgresql-15.2':
+      Engine: 'aurora-postgresql'
+      EngineVersion: '15.2'
+      ClusterParameterGroupFamily: 'aurora-postgresql15'
+      ParameterGroupFamily: 'aurora-postgresql15'
+    'aurora-postgresql-14.11':
+      Engine: 'aurora-postgresql'
+      EngineVersion: '14.11'
+      ClusterParameterGroupFamily: 'aurora-postgresql14'
+      ParameterGroupFamily: 'aurora-postgresql14'
+    'aurora-postgresql-13.14':
+      Engine: 'aurora-postgresql'
+      EngineVersion: '13.14'
+      ClusterParameterGroupFamily: 'aurora-postgresql13'
+      ParameterGroupFamily: 'aurora-postgresql13'
+    'aurora-postgresql-12.18':
+      Engine: 'aurora-postgresql'
+      EngineVersion: '12.18'
+      ClusterParameterGroupFamily: 'aurora-postgresql12'
+      ParameterGroupFamily: 'aurora-postgresql12'
+    'aurora-postgresql-11.21':
+      Engine: 'aurora-postgresql'
+      EngineVersion: '11.21'
+      ClusterParameterGroupFamily: 'aurora-postgresql11'
+      ParameterGroupFamily: 'aurora-postgresql11'
+
+Conditions:
+  hasEngineMySQL: !Equals [!FindInMap [EngineMap, !Ref Engine, Engine], 'aurora-mysql']
+  isDBT3: !Or [ !Or [ !Equals [ !Ref rdsInstanceType, 'db.t3.micro' ], !Equals [ !Ref rdsInstanceType, 'db.t3.small' ] ], !Equals [ !Ref rdsInstanceType, 'db.t3.medium' ] ]
+  enablePerformanceInsights: # aurora-mysql not supported by db.t2 | db.t3 | db.t4g.micro | db.t4g.small
+    !And [ !Not [ !And [ !Condition hasEngineMySQL, !Condition isDBT3 ] ], !Not [!Equals [!Ref rdsInstanceType, 'db.t3.small']] ]
+  isProduction:  !Equals [ !Ref stage, pdn]
+
+Resources:
+
+  DBClusterParameterGroup:
+    Type: 'AWS::RDS::DBClusterParameterGroup'
+    Properties:
+      Description: !Ref 'AWS::StackName'
+      Family: !FindInMap [EngineMap, !Ref Engine, ClusterParameterGroupFamily]
+      Parameters: !If
+      - hasEngineMySQL
+      - character_set_client: utf8
+        character_set_connection: utf8
+        character_set_database: utf8
+        character_set_filesystem: utf8
+        character_set_results: utf8
+        character_set_server: utf8
+        collation_connection: utf8_general_ci
+        collation_server: utf8_general_ci
+      - client_encoding: 'UTF8'
+
+  DBCluster:
+    DeletionPolicy: Snapshot # default
+    UpdateReplacePolicy: Snapshot
+    Type: 'AWS::RDS::DBCluster'
+    Properties:
+      BackupRetentionPeriod: !If [isProduction, 35, 1]
+      PreferredBackupWindow: !Ref PreferredBackupWindow
+      PreferredMaintenanceWindow: !Ref PreferredMaintenanceWindow
+      DatabaseName: !Ref dbName
+      DBClusterIdentifier: !Sub 'db-${project}-${stage}'
+      DBSubnetGroupName: !Ref dbSubnetGroup
+      # EnableCloudwatchLogsExports:
+      #   - postgresql
+      Engine: !FindInMap [EngineMap, !Ref Engine, Engine]
+      EngineMode: provisioned
+      EngineVersion: !FindInMap [EngineMap, !Ref Engine, EngineVersion]
+      DeletionProtection:  !If [isProduction, true, false]
+      DBClusterParameterGroupName: !Ref DBClusterParameterGroup
+      MasterUsername: !Sub '{{resolve:secretsmanager:${dbCredentialsSecretARN}::username}}'
+      MasterUserPassword: !Sub '{{resolve:secretsmanager:${dbCredentialsSecretARN}::password}}'
+      Port: !Ref dbPort
+      StorageEncrypted: true
+      KmsKeyId: !Ref kmsARN
+      VpcSecurityGroupIds:
+        - !Ref dbSecurityGroupGroupId
+
+  DBParameterGroup:
+    Type: 'AWS::RDS::DBParameterGroup'
+    Properties:
+      Description: !Ref 'AWS::StackName'
+      Family: !FindInMap [EngineMap, !Ref Engine, ParameterGroupFamily]
+
+  DBInstanceA:
+    Type: 'AWS::RDS::DBInstance'
+    Properties:
+      DBClusterIdentifier: !Ref DBCluster
+      DBInstanceIdentifier: !Sub 'db-${project}-${stage}-01'
+      DBSubnetGroupName: !Ref dbSubnetGroup
+      DBInstanceClass: !Ref rdsInstanceType
+      Engine: !FindInMap [EngineMap, !Ref Engine, Engine]
+      PubliclyAccessible: 'false'
+      EnablePerformanceInsights: !If [enablePerformanceInsights, true, false]
+      PerformanceInsightsRetentionPeriod: !If [enablePerformanceInsights, 7, !Ref AWS::NoValue]
+      PerformanceInsightsKMSKeyId: !If [enablePerformanceInsights, !Ref kmsARN, !Ref AWS::NoValue]
+      MultiAZ: !If [isProduction, false, false]
+
+  DBInstanceB:
+    Type: 'AWS::RDS::DBInstance'
+    Condition: isProduction
+    Properties:
+      DBClusterIdentifier: !Ref DBCluster
+      DBInstanceIdentifier: !Sub 'db-${project}-${stage}-02'
+      DBSubnetGroupName: !Ref dbSubnetGroup
+      DBInstanceClass: !Ref rdsInstanceType
+      Engine: !FindInMap [EngineMap, !Ref Engine, Engine]
+      PubliclyAccessible: 'false'
+      EnablePerformanceInsights: !If [enablePerformanceInsights, true, false]
+      PerformanceInsightsRetentionPeriod: !If [enablePerformanceInsights, 7, !Ref AWS::NoValue]
+      PerformanceInsightsKMSKeyId: !If [enablePerformanceInsights, !Ref kmsARN, !Ref AWS::NoValue]
+      MultiAZ: !If [isProduction, false, false]
+
+Outputs:
+  DBCluster:
+    Description: DBCluster
+    Value: !Ref DBCluster
+
+  DBAddress:
+    Description: DBAddress
+    Value: !GetAtt DBCluster.Endpoint.Address
+  
+  DBPort:
+    Description: DBPort
+    Value: !GetAtt DBCluster.Endpoint.Port

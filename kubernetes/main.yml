@@ -1,0 +1,38 @@
+jobs:
+- job: deploy_kubernetes
+  displayName: Deploy API in Kubernetes
+  steps:
+    - task: replacetokens@6
+      displayName: Replace variables into kubernetes files 
+      inputs:
+        sources: '$(System.DefaultWorkingDirectory)/kubernetes/**'
+        tokenPattern: 'azpipelines'
+        encoding: 'utf-8'
+
+      
+    - task: Kubernetes@1
+      displayName: 'kubectl apply configfile'
+      inputs:
+        kubernetesServiceEndpoint: $(kubernetesCredentials)
+        namespace: $(namespace)
+        command: apply
+        arguments: '-f kubernetes/$(kubernetesConfigFile)'
+        versionSpec: 1.27.13
+
+    - task: Kubernetes@1
+      displayName: 'kubectl apply deployment'
+      inputs:
+        kubernetesServiceEndpoint: $(kubernetesCredentials)
+        namespace: $(namespace)
+        command: apply
+        arguments: '-f kubernetes/$(kubernetesFile)'
+        versionSpec: 1.27.13
+    
+    - task: Kubernetes@1
+      displayName: 'kubectl rollout'
+      inputs:
+        kubernetesServiceEndpoint: $(kubernetesCredentials)
+        namespace: $(namespace)
+        command: rollout
+        arguments: 'restart deployment $(apiName)'
+        versionSpec: 1.27.13

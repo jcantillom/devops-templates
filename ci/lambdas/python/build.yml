@@ -1,0 +1,322 @@
+stages:
+  - stage: CI
+    displayName: "Continuous Integration - Lambda"
+    jobs:
+      - job: BuildJob
+        displayName: "Build Python Lambda"
+        steps:
+          - checkout: self
+            clean: true
+            fetchDepth: 1
+
+          #  == Build + Package ==
+          - script: |
+              set -euo pipefail
+              echo "Preparando carpeta de build..."
+              rm -rf build && mkdir -p build
+
+              echo "Instalando dependencias en build/..."
+              python3 -m pip install --upgrade pip
+              pip install --upgrade setuptools wheel
+              pip install -r requirements.txt --target build/ --no-cache-dir
+
+              echo "Copiando código fuente (src/) dentro de build/..."
+              rsync -a src/ build/src/
+              touch build/src/__init__.py  # asegurar paquete
+
+              # Pruning para adelgazar
+              find build -type d -name "__pycache__" -prune -exec rm -rf {} +
+              find build -type f -name "*.pyc" -delete
+              find build -type d -name "tests" -prune -exec rm -rf {} +
+            displayName: "Instalar dependencias y preparar build/"
+
+          # Empaquetado
+          - script: |
+              set -euo pipefail
+              cd build
+              zip -r "$(Build.ArtifactStagingDirectory)/lambda.zip" . -x "*.git*" "__pycache__/*"
+              echo "Contenido de $(Build.ArtifactStagingDirectory):"
+              ls -lah "$(Build.ArtifactStagingDirectory)"
+            displayName: "Empaquetar Lambda (zip build/)"
+
+          # Subir a S3 temporal.
+          - task: AWSShellScript@1
+            displayName: "Crear Bucket S3 Temporal y Subir Zip"
+            inputs:
+              awsCredentials: "$(AWS_SVC)"
+              regionName: "$(REGION)"
+              scriptType: "inline"
+              inlineScript: |
+                set -euo pipefail
+                TEMP_BUCKET="temp-lambda-bucket-$(date +%s)-$RANDOM"
+                KEY="lambda.zip"
+
+                aws s3 mb "s3://$TEMP_BUCKET" --region "$(REGION)"
+                aws s3 cp "$(Build.ArtifactStagingDirectory)/lambda.zip" "s3://$TEMP_BUCKET/$KEY" --region "$(REGION)"
+
+                echo "##vso[task.setvariable variable=LAMBDA_S3_BUCKET;isOutput=false]$TEMP_BUCKET"
+                echo "##vso[task.setvariable variable=LAMBDA_S3_KEY;isOutput=false]$KEY"
+                echo "Zip en: s3://$TEMP_BUCKET/$KEY"
+
+
+          - task: AWSShellScript@1
+            displayName: "Crear/Actualizar Lambda (código desde S3) + ENV"
+            inputs:
+              awsCredentials: "$(AWS_SVC)"
+              regionName: "$(REGION)"
+              scriptType: "inline"
+              inlineScript: |
+                set -euo pipefail
+
+                FUNCTION_NAME="$(FUNCIONALIDAD)-$(env)"
+                ROLE_ARN="arn:aws:iam::$(ID_CUENTA):role/$(ROLE)"
+                S3_BUCKET="$(LAMBDA_S3_BUCKET)"
+                S3_KEY="$(LAMBDA_S3_KEY)"
+
+                # Instalar jq local si no existe (sin sudo)
+                if ! command -v jq >/dev/null 2>&1; then
+                  mkdir -p "$HOME/.local/bin"
+                  curl -sSL -o "$HOME/.local/bin/jq" "https://github.com/stedolan/jq/releases/download/jq-1.6/jq-linux64"
+                  chmod +x "$HOME/.local/bin/jq"
+                  export PATH="$HOME/.local/bin:$PATH"
+                fi
+
+                echo "Leyendo variables desde src/env.json..."
+                [ -f src/env.json ] || { echo "ERROR: falta src/env.json"; exit 1; }
+                RAW_ENV_JSON=$(cat src/env.json)
+                ENV_VARS_JSON=$(echo "$RAW_ENV_JSON" | jq -c 'to_entries | map({key: .key, value: (env[.key] // .value)}) | from_entries | {Variables: .}')
+
+                echo "Aplicando ENV (secretos ocultos):"
+                echo "$ENV_VARS_JSON" \
+                  | jq -c '{Variables: ( .Variables | with_entries( if (.key|test("TOKEN|PASSWORD|SECRET|KEY";"i")) then .value="***" else . end))}'
+
+                if ! aws lambda get-function --function-name "$FUNCTION_NAME" --region "$(REGION)" >/dev/null 2>&1; then
+                  echo "Creando función desde S3..."
+                  aws lambda create-function \
+                    --function-name "$FUNCTION_NAME" \
+                    --runtime python3.9 \
+                    --role "$ROLE_ARN" \
+                    --handler src.main.handler \
+                    --code S3Bucket="$S3_BUCKET",S3Key="$S3_KEY" \
+                    --environment "$ENV_VARS_JSON" \
+                    --timeout 20 \
+                    --memory-size 512 \
+                    --region "$(REGION)"
+                else
+                  echo "Actualizando código desde S3..."
+                  aws lambda update-function-code \
+                    --function-name "$FUNCTION_NAME" \
+                    --s3-bucket "$S3_BUCKET" \
+                    --s3-key "$S3_KEY" \
+                    --region "$(REGION)"
+                fi
+
+                echo "Esperando a que termine la actualización..."
+                STATUS="InProgress"
+                while [ "$STATUS" = "InProgress" ]; do
+                  sleep 5
+                  STATUS=$(aws lambda get-function --function-name "$FUNCTION_NAME" --region "$(REGION)" --query "Configuration.LastUpdateStatus" --output text)
+                  echo "Estado: $STATUS"
+                done
+                [ "$STATUS" = "Successful" ] || { echo "ERROR: update-function-code terminó: $STATUS"; exit 1; }
+
+                echo "Actualizando configuración (ENV) ..."
+                aws lambda update-function-configuration \
+                  --function-name "$FUNCTION_NAME" \
+                  --environment "$ENV_VARS_JSON" \
+                  --timeout 20 \
+                  --memory-size 512 \
+                  --region "$(REGION)"
+                echo "Lambda lista: $FUNCTION_NAME"                
+          
+
+          #== eliminar el bucket S3 temporal creado antes ==
+          - task: AWSShellScript@1
+            displayName: "Eliminar Bucket S3 Temporal"
+            condition: always()
+            inputs:
+              awsCredentials: "$(AWS_SVC)"
+              regionName: "$(REGION)"
+              scriptType: "inline"
+              inlineScript: |
+                set -euo pipefail
+                S3_BUCKET="$(LAMBDA_S3_BUCKET)"
+                echo "Eliminando objetos en s3://$S3_BUCKET ..."
+                aws s3 rm "s3://$S3_BUCKET" --recursive --region "$(REGION)" || echo "No se pudieron eliminar algunos objetos."
+                echo "Eliminando bucket s3://$S3_BUCKET ..."
+                aws s3 rb "s3://$S3_BUCKET" --region "$(REGION)" || echo "No se pudo eliminar el bucket."
+                echo "Bucket temporal eliminado: $S3_BUCKET"
+            
+
+          - task: AWSShellScript@1
+            displayName: "Smoke test por Invoke (evento API v2 /health)"
+            condition: and(succeeded(), eq('${{ parameters.enable_apigw }}', true))
+            inputs:
+              awsCredentials: "$(AWS_SVC)"
+              regionName: "$(REGION)"
+              scriptType: "inline"
+              inlineScript: |
+                set -euo pipefail
+                FN="$(FUNCIONALIDAD)-$(env)"
+                REGION="$(REGION)"
+
+                cat > /tmp/event.json <<'JSON'
+                {
+                  "version": "2.0",
+                  "routeKey": "GET /health",
+                  "rawPath": "/health",
+                  "rawQueryString": "",
+                  "headers": {
+                    "host": "example.lambda-url.us-east-1.on.aws",
+                    "x-forwarded-proto": "https",
+                    "x-forwarded-port": "443",
+                    "user-agent": "curl/8.0"
+                  },
+                  "requestContext": {
+                    "http": {
+                      "method": "GET",
+                      "path": "/health",
+                      "protocol": "HTTP/1.1",
+                      "sourceIp": "1.2.3.4",
+                      "userAgent": "curl/8.0"
+                    }
+                  },
+                  "isBase64Encoded": false
+                }
+                JSON
+
+                invoke_once () {
+                  aws lambda invoke \
+                    --function-name "$FN" \
+                    --payload fileb:///tmp/event.json \
+                    /tmp/resp.json \
+                    --region "$REGION" >/tmp/meta.txt
+                }
+
+                set +e
+                invoke_once
+                set -e
+                invoke_once
+
+                echo "== Meta =="; cat /tmp/meta.txt
+                echo "== Payload =="; cat /tmp/resp.json; echo
+
+                # Extraer statusCode.
+                STATUS=$(python3 - <<'PY'
+                import json
+                try:
+                    print(json.load(open("/tmp/resp.json")).get("statusCode",""))
+                except Exception:
+                    print("")
+                PY
+                )
+                echo "statusCode=${STATUS:-<none>}"
+                [ "${STATUS:-}" = "200" ] || { echo "Smoke test falló"; exit 1; }
+                echo "Smoke test OK"
+
+
+          # API Gateway (opcional, desactivado por defecto)
+          - task: AWSShellScript@1
+            displayName: "Integrar con API Gateway"
+            condition: and(succeeded(), eq('${{ parameters.enable_apigw }}', true))
+            inputs:
+              awsCredentials: "$(AWS_SVC)"
+              regionName: "$(REGION)"
+              scriptType: "inline"
+              inlineScript: |
+                set -euo pipefail
+
+                API_NAME="$(API_GW_NAME)-$(env)"
+                REGION="$(REGION)"
+                ACCOUNT_ID="$(ID_CUENTA)"
+                FUNCTION_NAME="$(FUNCIONALIDAD)-$(env)"
+                STAGE_NAME="$(env)"
+                FUNCTION_QUALIFIER=""
+
+                echo "==> Asegurar REST API: ${API_NAME}"
+                API_ID=$(aws apigateway get-rest-apis --query "items[?name=='${API_NAME}'].id | [0]" --output text 2>/dev/null || echo "None")
+                if [ -z "${API_ID}" ] || [ "${API_ID}" = "None" ]; then
+                  API_ID=$(aws apigateway create-rest-api --name "${API_NAME}" --query "id" --output text)
+                  echo "Creada API: ${API_ID}"
+                else
+                  echo "Usando API existente: ${API_ID}"
+                fi
+
+                ROOT_ID=$(aws apigateway get-resources --rest-api-id "${API_ID}" --query "items[?path=='/'].id | [0]" --output text)
+
+                PROXY_ID=$(aws apigateway get-resources --rest-api-id "${API_ID}" --query "items[?pathPart=='{proxy+}'].id | [0]" --output text 2>/dev/null || echo "None")
+                if [ -z "${PROXY_ID}" ] || [ "${PROXY_ID}" = "None" ]; then
+                  PROXY_ID=$(aws apigateway create-resource --rest-api-id "${API_ID}" --parent-id "${ROOT_ID}" --path-part "{proxy+}" --query "id" --output text)
+                fi
+
+                ensure_any_proxy () {
+                  local RID="$1"
+                  local IS_PROXY="$2"
+                  local LAMBDA_ARN="arn:aws:lambda:${REGION}:${ACCOUNT_ID}:function:${FUNCTION_NAME}${FUNCTION_QUALIFIER}"
+                  local INT_URI="arn:aws:apigateway:${REGION}:lambda:path/2015-03-31/functions/${LAMBDA_ARN}/invocations"
+
+                  if ! aws apigateway get-method --rest-api-id "${API_ID}" --resource-id "${RID}" --http-method "ANY" >/dev/null 2>&1; then
+                    if [ "${IS_PROXY}" = "true" ]; then
+                      aws apigateway put-method --rest-api-id "${API_ID}" --resource-id "${RID}" --http-method "ANY" --authorization-type "NONE" --request-parameters "method.request.path.proxy=true" >/dev/null
+                    else
+                      aws apigateway put-method --rest-api-id "${API_ID}" --resource-id "${RID}" --http-method "ANY" --authorization-type "NONE" >/dev/null
+                    fi
+                  fi
+
+                  if [ "${IS_PROXY}" = "true" ]; then
+                    aws apigateway put-integration --rest-api-id "${API_ID}" --resource-id "${RID}" --http-method "ANY" --type "AWS_PROXY" --integration-http-method "POST" --uri "${INT_URI}" --request-parameters "integration.request.path.proxy=method.request.path.proxy" >/dev/null
+                  else
+                    aws apigateway put-integration --rest-api-id "${API_ID}" --resource-id "${RID}" --http-method "ANY" --type "AWS_PROXY" --integration-http-method "POST" --uri "${INT_URI}" >/dev/null
+                  fi
+                }
+
+                ensure_any_proxy "${ROOT_ID}" "false"
+                ensure_any_proxy "${PROXY_ID}" "true"
+
+                SID="apigw-invoke-$(date +%s)"
+                set +e
+                aws lambda add-permission \
+                  --function-name "${FUNCTION_NAME}${FUNCTION_QUALIFIER}" \
+                  --statement-id "${SID}" \
+                  --action "lambda:InvokeFunction" \
+                  --principal "apigateway.amazonaws.com" \
+                  --source-arn "arn:aws:execute-api:${REGION}:${ACCOUNT_ID}:${API_ID}/*/*/*" \
+                  --region "${REGION}" >/dev/null 2>&1
+                set -e
+
+                aws apigateway create-deployment --rest-api-id "${API_ID}" --stage-name "${STAGE_NAME}" >/dev/null || true
+
+                INVOKE_URL="https://${API_ID}.execute-api.${REGION}.amazonaws.com/${STAGE_NAME}"
+                echo "Invoke URL: ${INVOKE_URL}"
+                echo "##vso[task.setvariable variable=API_LUCIA_URL]${INVOKE_URL}"
+
+                CODE=$(curl -s -o /tmp/resp.json -w "%{http_code}" "${INVOKE_URL}/health")
+                echo "HTTP ${CODE}"
+                cat /tmp/resp.json || true
+                [ "${CODE}" = "200" ] || { echo "Smoke test API GW falló"; exit 1; }
+                echo "Integración REST API OK"
+
+          - task: AWSShellScript@1
+            displayName: "Dump últimos logs de CloudWatch (si falla)"
+            condition: failed()
+            inputs:
+              awsCredentials: "$(AWS_SVC)"
+              regionName: "$(REGION)"
+              scriptType: "inline"
+              inlineScript: |
+                set -euo pipefail
+                FN="$(FUNCIONALIDAD)-$(env)"
+                LOG_GROUP="/aws/lambda/$FN"
+                echo "Últimos eventos de $LOG_GROUP"
+                # últimos 50 eventos de los últimos 30 minutos
+                aws logs filter-log-events \
+                  --log-group-name "$LOG_GROUP" \
+                  --start-time $(( (($(date +%s) - 1800)) * 1000 )) \
+                  --max-items 50 \
+                  --query 'events[].message' \
+                  --output text || true
+
+            
+
+
+            

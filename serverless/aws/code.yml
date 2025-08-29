@@ -1,0 +1,19 @@
+steps:
+  - task: AWSShellScript@1
+    displayName: "AWS Shell Script - Serverless Deploy"
+    inputs:
+      awsCredentials: $(awsCredentials)
+      regionName: $(region)
+      scriptType: inline
+      inlineScript: |
+        echo "Serverless version: $(serverlessFullVersion)"
+        if [ -z "$(serverlessFile)" ];then
+          echo "Deploying without custom serverless file name"
+          npx $(serverlessFullVersion) deploy --stage $(stage)
+        else
+          echo "Deploying with custom serverless file name: $(serverlessFile)"
+          npx $(serverlessFullVersion) deploy --stage $(stage) --config $(serverlessFile)
+        fi
+      disableAutoCwd: true
+      workingDirectory: "${{parameters.workPath}}"
+      #continueOnError: false

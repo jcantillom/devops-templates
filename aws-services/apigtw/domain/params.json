@@ -1,0 +1,34 @@
+[ 
+    {
+        "ParameterKey": "stage",
+        "ParameterValue": "$(stage)"
+    },
+    {
+        "ParameterKey": "project",
+        "ParameterValue": "$(project)"
+    },
+    {
+        "ParameterKey": "cfBucketName",
+        "ParameterValue": "$(cfBucketName)"
+    },
+    {
+        "ParameterKey": "apiCertificateARN",
+        "ParameterValue": "$(apiCertificateARN)"
+    },
+    {
+        "ParameterKey": "apiDomainName",
+        "ParameterValue": "$(apiDomainName)"
+    },
+    {
+        "ParameterKey": "websocketCertificateARN",
+        "ParameterValue": "$(websocketCertificateARN)"
+    },
+    {
+        "ParameterKey": "websocketDomainName",
+        "ParameterValue": "$(websocketDomainName)"
+    },
+    {
+        "ParameterKey": "ipAddressAZ",
+        "ParameterValue": "$(ipAddressAZ)"
+    }
+]

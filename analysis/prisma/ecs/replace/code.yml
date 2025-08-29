@@ -1,0 +1,7 @@
+steps:
+  - task: replace-variables-in-file@1
+    displayName: Set parameters values file:env code
+    inputs:
+      filepath: "${{ parameters.workPath }}/.env"
+      endWithNewLine: true
+      verbose: true

@@ -1,0 +1,77 @@
+jobs:
+  - job: Serverless_deploy
+    displayName: Serverless deploy
+    steps:
+      - checkout: self
+        fetchDepth: 5
+        clean: true
+      # replace
+      - ${{ if eq(parameters.type, 'multi-deploy') }}:
+        - task: replace-variables-in-file@1
+          displayName: "Replace .env variables"
+          inputs:
+            filepath: "${{ parameters.workPath }}/serverless-files/serverless.common.yml"
+            endWithNewLine: true
+            verbose: true
+      - ${{ else }}:
+        - task: replace-variables-in-file@1
+          displayName: "Replace .env variables"
+          inputs:
+            filepath: "${{ parameters.workPath }}/.env"
+            endWithNewLine: true
+            verbose: true
+
+      # export serverless
+      - task: CmdLine@2
+        displayName: "Export serverlessFullVersion"
+        inputs:
+          script: |
+            echo "Serverless version: $(serverlessVersion)"
+            if [[ $(serverlessVersion) == '2' ]]; then
+              export serverlessFullVersion="serverless@3.38.0"
+            elif [[ $(serverlessVersion) == '3' ]]; then
+              export serverlessFullVersion="serverless@3.38.0"
+            fi
+            echo "##vso[task.setvariable variable=serverlessFullVersion]$serverlessFullVersion"
+
+      # dependencies
+      - ${{ if eq(parameters.code, 'node') }}:
+        - task: CmdLine@2
+          displayName: "AWS - Dependencies installation"
+          inputs:
+            script: |
+              source ~/.bash_profile
+              nvm use $(nodeVersion)
+              rm -rf node_modules
+              npm cache clean --force
+              npm cache verify
+              npm update
+              echo "Install packages"
+              npm install
+            workingDirectory: ${{ parameters.workPath }}
+        
+      - ${{ if ne(parameters.code, 'node') }}:
+        - task: CmdLine@2
+          displayName: "AWS - Dependencies installation"
+          inputs:
+            script: |
+              source ~/.bash_profile
+              nvm use default
+              rm -rf node_modules package-lock.json Pipfile
+              npm cache clean --force
+              npm cache verify
+              npm update
+              echo "Pluggins a instalar $(plugginsToInstall)"
+              npm init -y
+              npm install $(plugginsToInstall)
+            workingDirectory: ${{ parameters.workPath }}
+
+      # tags-control No multi-deploy
+      - template: aws/validate-tags.yml
+        parameters:
+          workPath: ${{ parameters.workPath }}
+
+      # deploy
+      - template: aws/${{ parameters.type }}.yml
+        parameters:
+          workPath: ${{ parameters.workPath }}

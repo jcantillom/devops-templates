@@ -1,0 +1,50 @@
+steps:
+  - task: CmdLine@2
+    displayName: 'Prisma Serverless Scan'
+    inputs:
+      script: |
+
+        echo '
+           ______   ______     __     ______     __    __     ______        ______     __         ______     __  __     _____    
+          /\  == \ /\  == \   /\ \   /\  ___\   /\ "-./  \   /\  __ \      /\  ___\   /\ \       /\  __ \   /\ \/\ \   /\  __-.  
+          \ \  _-/ \ \  __<   \ \ \  \ \___  \  \ \ \-./\ \  \ \  __ \     \ \ \____  \ \ \____  \ \ \/\ \  \ \ \_\ \  \ \ \/\ \ 
+           \ \_\    \ \_\ \_\  \ \_\  \/\_____\  \ \_\ \ \_\  \ \_\ \_\     \ \_____\  \ \_____\  \ \_____\  \ \_____\  \ \____- 
+            \/_/     \/_/ /_/   \/_/   \/_____/   \/_/  \/_/   \/_/\/_/      \/_____/   \/_____/   \/_____/   \/_____/   \/____/ 
+                                                                                                                                
+        '
+        errors=0
+        cd ./repository_package/$(Build.Repository.Name)
+        echo "Archivos a desplegar empaquetados"
+        pwd
+        ls
+        serverless_packages=$(find . -name "*.zip")
+        echo ""
+        for package in $serverless_packages; do
+          echo "============================================ Prisma Cloud Scan ===========================================" 
+          echo ""
+
+          twistlock_command="$TWISTCLI serverless scan  --address https://us-east1.cloud.twistlock.com/us-2-158317420/ -u $(username) -p $(password) --details $package"
+          $twistlock_command
+
+          if [ $? -eq 0 ]; then
+          
+            if [ $errors == 1 ]; then
+                errors=1
+            else
+                errors=0
+            fi
+
+          else
+              errors=1
+          fi
+
+          echo ""
+
+        done;
+
+        if [ $errors == 1 ]; then
+            echo "===================================== Hubo errores en la ejecución del prisma scan ===================="
+            exit 125
+        fi
+
+      workingDirectory: '${{parameters.serverlessPath}}'

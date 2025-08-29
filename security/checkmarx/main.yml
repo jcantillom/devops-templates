@@ -1,0 +1,65 @@
+jobs:
+  - job: isCritical
+    displayName: Choose Security Tool
+    steps:
+      - task: AmazonWebServices.aws-vsts-tools.LambdaInvokeFunction.LambdaInvokeFunction@1
+        displayName: 'Invoke Lambda Function: func-Checkmarx-Repo-Search-pdn'
+        inputs:
+          awsCredentials: 'INFRARESOURCES-MULTIPROJECTS-PDN'
+          regionName: 'us-east-1'
+          functionName: 'func-Checkmarx-Repo-Search-pdn'
+          payload: |
+            {
+              "repoName":"$(Build.Repository.Name)"
+            }
+          outputVariable: response
+          logType: Tail
+      
+      - task: CmdLine@2
+        name: setVars  # Este nombre es clave para acceder a outputs desde otros jobs
+        displayName: Setup Environment Variables
+        inputs:
+          script: |
+            echo "Lambda Response: $(response)"
+            
+            is_critical=$(echo "$(response)" | grep -oE '"checkmarx_enabled": (true|false)' | grep -oE '(true|false)')
+            echo "##vso[task.setvariable variable=checkmarx;isOutput=true]$is_critical"
+
+            if [[ "$is_critical" == "true" ]]; then
+              cx_group="CxColombia"
+              id=$(echo "$(response)" | grep -oE '"id": [0-9]+' | grep -oE '[0-9]+')
+              repository_url=$(echo "$(response)" | grep -oE '"repository_url": "[^"]+"' | sed 's/"repository_url": "//;s/"$//')
+              app_name=$(echo "$(response)" | grep -oE '"app_name": "[^"]+"' | sed 's/"app_name": "//;s/"$//')
+              criticality=$(echo "$(response)" | grep -oE '"criticality": [0-9]+' | grep -oE '[0-9]+')
+
+              echo "##vso[task.setvariable variable=cx_group;isOutput=true]$cx_group"
+              echo "##vso[task.setvariable variable=id;isOutput=true]$id"
+              echo "##vso[task.setvariable variable=repository_url;isOutput=true]$repository_url"
+              echo "##vso[task.setvariable variable=app_name;isOutput=true]$app_name"
+              echo "##vso[task.setvariable variable=criticality;isOutput=true]$criticality"
+            fi
+
+  - job: CheckmarxScan
+    displayName: 🚨 Checkmarx Scan 🚨
+    dependsOn: isCritical
+    condition: eq(dependencies.isCritical.outputs['setVars.checkmarx'], 'true')
+    variables:
+      id_aplicacao: $[ dependencies.isCritical.outputs['setVars.id'] ]
+      cx_group: $[ dependencies.isCritical.outputs['setVars.cx_group'] ]
+    steps:
+      - task: Checkmarx AST@3
+        displayName: 'Security Testing (Checkmarx)'
+        inputs:
+          CheckmarxService: 'Checkmarx-One'
+          projectName: '$(System.TeamProject)-REP-$(Build.Repository.Name)'
+          branchName: '$(Build.SourceBranchName)'
+          tenantName: 'btg'
+          additionalParams: >
+            --sast-preset-name "Colombia Preset"
+            --scan-types sast,sca
+            --sast-incremental
+            --report-format pdf
+            --scan-info-format json
+            --scan-timeout 15
+            --project-groups "$(cx_group)"
+            --project-tags "repositorio:$(Build.Repository.Name),repositorio_id:$(Build.Repository.ID),pipeline:$(Build.DefinitionName),pipeline_id:$(System.DefinitionId),id_aplicacao:$(id_aplicacao),plataforma_de_desenvolvimento:Azure,branch:$(Build.SourceBranchName)"

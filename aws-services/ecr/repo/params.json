@@ -1,0 +1,19 @@
+[ 
+    {
+        "ParameterKey": "stage",
+        "ParameterValue": "$(stage)"
+    },
+    {
+        "ParameterKey": "project",
+        "ParameterValue": "$(project)"
+    },
+    {
+        "ParameterKey": "cfBucketName",
+        "ParameterValue": "$(cfBucketName)"
+    },
+
+    {
+        "ParameterKey": "serviceName",
+        "ParameterValue": "$(serviceName)"
+    }
+]

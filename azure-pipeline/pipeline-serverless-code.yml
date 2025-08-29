@@ -1,0 +1,57 @@
+trigger:
+  branches:
+    include:
+      - development
+      - qc
+      - release
+      - master
+  paths:
+    include:
+      - "*"
+    exclude:
+      - "*.yml"
+
+pool: "BTG Colombia - Azure DevOps"
+
+resources:
+  repositories:
+    - repository: devops-templates
+      type: git
+      name: devops-templates
+      ref: master
+
+variables:
+  - name: stage
+    ${{ if eq(variables['Build.SourceBranchName'], 'development') }}:
+      value: dev
+    ${{ elseif eq(variables['Build.SourceBranchName'], 'release') }}:
+      value: uat
+    ${{ elseif eq(variables['Build.SourceBranchName'], 'master') }}:
+      value: pdn
+  - name: region
+    value: us-east-1
+  - name: awsCredentials
+    value: SERVICE-${{upper(variables.stage)}}
+
+  - group: group-tags
+  - group: group
+  - group: group-${{variables.stage}}
+  # Need for services == serverless
+  - name: deploymentBucketName
+    value: bucket-ACCOUNT-$(stage)-serverless # replace ACCOUNT by AWS-Name Account
+  - name: serverlessVersion
+    value: '3'
+  - name: plugginsToInstall # Optional
+    value: 'serverless-python-requirements serverless-plugin-common-excludes'
+  - name: serverlessFile # Optional
+    value: 'CUSTOM_NAME-CUSTOM_PATH'
+  - name: pythonVersion #Optional - only for python code
+    value: '3.9'
+
+stages:
+  - template: main.yml@devops-templates
+    parameters:
+      service: serverless
+      code: python
+      type: code
+      workPath: $(System.DefaultWorkingDirectory)

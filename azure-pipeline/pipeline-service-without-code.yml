@@ -1,0 +1,65 @@
+trigger:
+  branches:
+    include:
+      - development
+      - qc
+      - release
+      - master
+  paths:
+    include:
+      - "*"
+    exclude:
+      - "*.yml"
+
+pool: "BTG Colombia - Azure DevOps"
+
+resources:
+  repositories:
+    - repository: devops-templates
+      type: git
+      name: devops-templates
+      ref: master
+
+variables:
+  - name: stage
+    ${{ if eq(variables['Build.SourceBranchName'], 'development') }}:
+      value: dev
+    ${{ elseif eq(variables['Build.SourceBranchName'], 'release') }}:
+      value: uat
+    ${{ elseif eq(variables['Build.SourceBranchName'], 'master') }}:
+      value: pdn
+  - name: region
+    value: us-east-1
+  - name: awsCredentials
+    value: SERVICE-${{upper(variables.stage)}}
+
+  - group: group-tags
+  - group: group
+  - group: group-${{variables.stage}}
+  # Need for services != serverless
+  - name: cfBucketName
+    value: btg.${{variables.stage}}.ACCOUNT.cloudformation
+
+stages:
+  # if deploy ecs main, the key must be infra. To deploy service or service back save mainProject var
+  - template: main.yml@devops-templates
+    parameters:
+      service: ecs
+      resource: main
+      key: infra
+      code: resources
+  # if deploy rds main, the key must be infra. To deploy instances save mainProject var
+  - template: main.yml@devops-templates
+    parameters:
+      service: rds
+      resource: main
+      key: infra
+      code: resources
+  # Variables need mainProject var: project deploy ecs main with key = infra
+  # Need instanceId var = key
+  - template: main.yml@devops-templates
+    parameters:
+      service: rds
+      resource: instance
+      key: infra-$(instanceId)
+      code: resources

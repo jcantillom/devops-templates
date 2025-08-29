@@ -1,0 +1,64 @@
+jobs:
+  - job: prisma_ECR_image
+    displayName: 🛡️Checkov Prisma Analysis🛡️🚨
+    # condition: not(eq(variables[dependencies.initJob.outputs['init.repoName']],'true'))
+    variables:
+    - group: canales-digitales-artifact
+    steps:
+      - task: CmdLine@2
+        displayName: "Validate Token"
+        inputs:
+          script: |
+            echo 'vstsMavenAccessTokenBtgColombia= $(vstsMavenAccessTokenBtgColombia)'
+
+      - task: Gradle@3
+        displayName: 'clean build'
+        inputs:
+          tasks: 'clean build -PvstsMavenAccessTokenBtgColombia=$(vstsMavenAccessTokenBtgColombia)'
+          publishJUnitResults: false
+          javaHomeOption: Path
+          jdkDirectory: '/usr/lib/jvm/java-17-amazon-corretto.x86_64/'
+
+
+      - task: AWSShellScript@1
+        displayName: ECR Docker Login
+        inputs:
+          awsCredentials: $(awsCredentials)
+          regionName: $(region)
+          scriptType: "inline"
+          inlineScript: |
+            accountId=$(aws sts get-caller-identity --output text --query 'Account')
+            echo "Account ID: $accountId"
+            echo "##vso[task.setvariable variable=accountId;]$accountId"
+            aws ecr get-login-password --region $(region) | docker login --username AWS --password-stdin $accountId.dkr.ecr.$(region).amazonaws.com
+      
+      - task: AWSShellScript@1
+        displayName: Docker build
+        inputs:
+          awsCredentials: $(awsCredentials)
+          regionName: $(region)
+          scriptType: "inline"
+          inlineScript: |
+            docker build . -t $(ecr_url)/$(namespace)/$(ecrRepoName):$(tag) -t $(ecr_url)/$(namespace)/$(ecrRepoName):latest --build-arg ecr=$(ecr_url) --build-arg var_profile=$(PROFILE)
+            echo "Imagenes Construidas"
+            docker images
+          disableAutoCwd: true
+          workingDirectory: "${{ parameters.workPath }}"
+
+      - task: AWSShellScript@1
+        displayName: Docker push
+        inputs:
+          awsCredentials: $(awsCredentials)
+          regionName: $(region)
+          scriptType: "inline"
+          inlineScript: |
+            docker push $(ecr_url)/$(namespace)/$(ecrRepoName) --all-tags
+    
+      # - task: prisma-cloud-compute-scan@3
+      #   displayName: Prisma image scan
+      #   # condition: not(eq(variables[dependencies.initJob.outputs['init.repoName']],'true'))
+      #   inputs:
+      #     scanType: "images"
+      #     twistlockService: "Prisma Compute Scan"
+      #     artifact: "$(imageName):$(version)"
+

@@ -1,0 +1,31 @@
+
+jobs:
+
+  # Prisma - Build
+  - template: prisma/${{ parameters.service }}/main.yml
+    parameters:
+      workPath: ${{ parameters.workPath }}
+      code: ${{ parameters.code }}
+      type: ${{ parameters.type }}
+      key: ${{ parameters.key }}
+  
+   # Sonar
+  - template: sonar/${{ parameters.code }}/${{ parameters.type }}.yml
+    parameters:
+      workPath: ${{ parameters.workPath }}
+  
+  # Fluid
+  #- template: fluid/main.yml
+
+  # checkmarx
+  - template: checkmarx/main.yml
+
+  # Semgrep
+  - template: semgrep/main.yml
+
+
+
+
+
+
+

@@ -1,0 +1,4 @@
+stages: 
+- stage: Security
+  jobs:
+    - template: checkmarx/main.yml@devops-templates

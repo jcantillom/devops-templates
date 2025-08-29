@@ -1,0 +1,48 @@
+steps:
+  - task: CmdLine@2
+    displayName: "Install modules and run tests"
+    inputs:
+      script: |
+        source ~/.bash_profile
+        nvm use $(nodeVersion)
+        echo "==================================================="
+        rm -rf node_modules package-lock.json
+        npm cache clean --force
+        npm cache verify
+        npm update
+        echo "Installing package"
+        npm install --force
+        echo "==================================================="
+        echo "Running tests"
+        npm run test:coverage
+      workingDirectory: ${{ parameters.workPath }}
+
+  - task: SonarQubePrepare@5.13.0
+    displayName: "SonarQube Prepare"
+    inputs:
+      SonarQube: "Sonar Qube"
+      scannerMode: "CLI"
+      configMode: "manual"
+      cliProjectKey: ${{ parameters.repoName }}
+      cliProjectName: ${{ parameters.repoName }}
+      cliSources: ${{ parameters.workPath }}
+      extraProperties: |
+        sonar.branch.name=$(Build.SourceBranchName)
+        #sonar.scm.enabled=true
+        sonar.test.inclusions=${{ parameters.testInclusions }}
+        sonar.exclusions=${{ parameters.testExclusion }}
+        sonar.javascript.exclusions=${{ parameters.testExclusion }}
+        sonar.javascript.lcov.reportPaths=${{ parameters.workPath }}/coverage/lcov.info
+
+  - task: SonarQubeAnalyze@5
+    displayName: "SonarQube Analyze"
+
+  - task: SonarQubePublish@5.0.2
+    displayName: "SonarQube Publish"
+    inputs:
+      pollingTimeoutSec: "300"
+
+  - task: sonar-buildbreaker@8
+    displayName: "SonarQube Breaker"
+    inputs:
+      SonarQube: "Sonar Qube"

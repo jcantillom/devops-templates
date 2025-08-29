@@ -1,0 +1,56 @@
+[ 
+    {
+        "ParameterKey": "stage",
+        "ParameterValue": "$(stage)"
+    },
+    {
+        "ParameterKey": "project",
+        "ParameterValue": "$(project)"
+    },
+    {
+        "ParameterKey": "infraProject",
+        "ParameterValue": "$(infraProject)"
+    },
+    {
+        "ParameterKey": "cfBucketName",
+        "ParameterValue": "$(cfBucketName)"
+    },
+    
+    {
+        "ParameterKey": "serviceName",
+        "ParameterValue": "$(serviceName)"
+    },
+    {
+        "ParameterKey": "containerCPU",
+        "ParameterValue": "$(containerCPU)"
+    },
+    {
+        "ParameterKey": "containerRAM",
+        "ParameterValue": "$(containerRAM)"
+    },
+    {
+        "ParameterKey": "containerPort",
+        "ParameterValue": "$(containerPort)"
+    },
+    {
+        "ParameterKey": "minContainers",
+        "ParameterValue": "$(minContainers)"
+    },
+    {
+        "ParameterKey": "maxContainers",
+        "ParameterValue": "$(maxContainers)"
+    },
+    {
+        "ParameterKey": "desiredTask",
+        "ParameterValue": "$(desiredTask)"
+    },
+    {
+        "ParameterKey": "autoScalingTargetValue",
+        "ParameterValue": "$(autoScalingTargetValue)"
+    },
+    {
+        "ParameterKey": "taskRoleName",
+        "ParameterValue": "$(taskRoleName)"
+    }
+    
+]

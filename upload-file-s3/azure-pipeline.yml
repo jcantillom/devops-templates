@@ -1,0 +1,35 @@
+#Este pipeline se ejecuta de forma manual para que sea bajo demanda el cargue de los archivos. 
+trigger: none
+
+pool: "BTG Colombia - Azure DevOps"
+
+variables:
+  - name: stage
+    ${{ if eq(variables['Build.SourceBranchName'], 'development') }}:
+      value: dev
+    ${{ elseif eq(variables['Build.SourceBranchName'], 'release') }}:
+      value: uat
+    ${{ elseif eq(variables['Build.SourceBranchName'], 'master') }}:
+      value: pdn
+  #Cambiar por las credenciales de aws del proyecto 
+  - name: aws_credentials
+    value: NEORIS-${{ upper( variables.stage ) }}
+  #Cambiar el nombre del bucket objetivo
+  - name: s3_bucket
+    value: s3-banco-integracion-regulatorios-api-cross-$(stage)-querys-bucket
+stages: 
+- stage: upload_files
+  displayName: Upload Files ${{ variables.stage }}
+  jobs:
+    - job: upload
+      displayName: Upload File to Bucket
+      steps: 
+      - task: S3Upload@1
+        inputs:
+          awsCredentials: $(aws_credentials)
+          regionName: 'us-east-1'
+          bucketName: '$(s3_bucket)'
+          #Identificar la ruta donde se encuentran los archivos a subir 
+          sourceFolder: '$(System.DefaultWorkingDirectory)/src/querys'
+          #Cambiar la expresion para el patron de archivos que se requiere subir
+          globExpressions: '*.sql'

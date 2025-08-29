@@ -1,0 +1,176 @@
+# Parameters
+# ________________________________________________________________________________________________________________________________
+#| service*     | code*     | type          |  workPath                         | resource                  | key                 |
+#|--------------|-----------|---------------|-----------------------------------|---------------------------|---------------------|
+#| sql          | resources |               |                                   |                           |                     |
+#|--------------|-----------|---------------|-----------------------------------|---------------------------|---------------------|
+#| serverless   | resources | code          | $(System.DefaultWorkingDirectory) |                           |                     |
+#|              |-----------|---------------|                                   |                           |                     |
+#|              | node      | code          |                                   |                           |                     |
+#|              |-----------|---------------|                                   |                           |                     |
+#|              | python    | code          |                                   |                           |                     |
+#|              |           | multi-deploy  |                                   |                           |                     |
+#|--------------|-----------|---------------|-----------------------------------|---------------------------|---------------------|
+#| <            | python    | code          | $(System.DefaultWorkingDirectory) | <                         | <Identity resource> |
+#|  ecr         |-----------|---------------|                                   |  repo                     |                     |
+#|  ecs         | node      | code          |                                   |  main-back                |                     |
+#|              |           | server-client |                                   |  main-service             |                     |
+#|  rds         |-----------|---------------|-----------------------------------|  main-instance            |                     |
+#|  waf         |           |               |                                   |  intern                   |                     |
+#|  cloudfront  | node      | client        |                                   |  intern-front             |                     |
+#|  apigtw      |           |               |                                   |  domain-restapi-websocket |                     |
+#| >            |           |               |                                   | >                         |                     |
+#|              | resources |               |                                   |                           |                     |
+#|kubernetes    | java      | code          | $(System.DefaultWorkingDirectory) |                           |                     |
+#|______________|___________|_______________|___________________________________|___________________________|_____________________|
+# *code != resources -> analyze code with sonar and prisma
+variables:
+  - template: vars/vars.yml
+
+parameters:
+  - name: service
+    type: string
+    values:
+      - sql
+      - serverless
+      - ecr
+      - ecs
+      - rds
+      - waf
+      - cloudfront
+      - apigtw
+      - ec2
+      - kubernetes
+      - lambdas
+
+  - name: code
+    type: string
+    values:
+      - resources
+      - node
+      - python
+      - java
+
+  - name: type
+    type: string
+    default: none
+    values:
+      - none
+      - code
+      - multi-deploy
+      - server-client
+      - client
+
+  - name: workPath
+    type: string
+    default:
+  - name: resource
+    type: string
+    default: none
+    values:
+      - none
+      - repo
+      - main
+      - service
+      - back
+      - instance
+      - instancesingle
+      - intern
+      - domain
+      - restapi
+      - websocket
+      - front
+
+  - name: key
+    type: string
+    default: none
+
+  - name: variables_release
+    type: string
+    default: devops-global
+  - name: variables_tags
+    type: string
+    default: devops-global
+  - name: variables_stage
+    type: string
+    default: devops-global
+
+stages:
+  # CI: Sonar / Prisma - Build
+  - ${{ if and(ne(parameters.code, 'resources'), ne(parameters.service, 'lambdas')) }}:
+    - stage: CI_${{ parameters.service }}_${{ parameters.resource }}_${{ parameters.code }}
+      displayName: ⚡Continuous Integration⚡
+      condition: ne('${{ parameters.code }}', 'resources')
+      variables:
+        - group: devops-agent-control
+        - group: bypass-sonar-control
+        - group: ${{ parameters.variables_release }}
+        - group: ${{ parameters.variables_tags }}
+        - group: ${{ parameters.variables_stage }}
+        - group: canales-digitales-artifact
+        - name: pythonVersionSemgrep
+          value: 3.10
+          
+      pool: '$[variables.default]'
+      jobs:
+        - job: initJob
+          steps:
+          - task: CmdLine@2
+            displayName: "init"
+            inputs:
+              script: |
+                echo "##vso[task.setvariable variable=repoName;isOutput=true]$(build.repository.name)"
+            name: init
+            
+        - template: analysis/main.yml
+          parameters:
+            workPath: ${{ parameters.workPath }}
+            service: ${{ parameters.service }}
+            code: ${{ parameters.code }}
+            type: ${{ parameters.type }}
+            key: ${{ parameters.key }}
+
+  # Deploy
+  - stage: CD_${{ parameters.service }}_${{ parameters.resource }}_${{ parameters.code }}
+    displayName: 🚀Deploy Application🚀
+    variables:
+      - group: devops-agent-control
+      - group: ${{ parameters.variables_release }}
+      - group: ${{ parameters.variables_tags }}
+      - group: ${{ parameters.variables_stage }}
+      - name: fileDeploy
+        ${{ if eq(parameters.service, 'serverless') }}:
+          value: serverless
+        ${{ elseif eq(parameters.service, 'sql') }}:
+          value: sql
+        ${{ elseif eq(parameters.service, 'kubernetes') }}:
+          value: kubernetes
+        ${{ elseif eq(parameters.resource, 'front') }}:
+          value: front
+        ${{ else }}:
+          value: aws-services
+    pool: '$[variables.default]'
+    jobs:
+      # === Build Lambdas ===
+      - ${{ if eq(parameters.service, 'lambdas') }}:
+          - template: ci/${{ parameters.service }}/${{ parameters.code }}/build.yml
+            parameters:
+              aws_svc: "$(AWS_SVC)"
+              idCuenta: "$(ID_CUENTA)"
+              funcionalidad: "$(FUNCIONALIDAD)"
+              region: "$(AWS_REGION)"
+
+      # === Deploy Resources ===
+      - ${{ if ne(parameters.service, 'lambdas') }}:
+        - template: ${{variables.fileDeploy}}/main.yml
+          parameters:
+            ${{ if eq(parameters.service, 'serverless') }}:
+              workPath: ${{ parameters.workPath }}
+              code: ${{ parameters.code }}
+              type: ${{ parameters.type }}
+            ${{ elseif eq(parameters.resource, 'front') }}:
+              workPath: ${{ parameters.workPath }}
+            ${{ else }}:
+              service: ${{ parameters.service }}
+              resource: ${{ parameters.resource }}
+              key: ${{ parameters.key }}

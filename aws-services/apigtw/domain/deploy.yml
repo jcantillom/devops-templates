@@ -1,0 +1,355 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: CloudFormation Custom Domain ApiGateway, ElasticLoadBalancingV2.
+Parameters:
+  stage:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - pdn
+      - uat
+      - qc
+      - dev
+  project:
+    Type: String
+  cfBucketName:
+    Type: String
+  apiCertificateARN:
+    Type: String
+  apiDomainName:
+    Type: String
+  websocketCertificateARN:
+    Type: String
+  websocketDomainName:
+    Type: String
+  loadBalancerPort:
+    Type: Number
+    Default: 443
+  ipAddressAZ:
+    Type: String
+    Default: ''
+
+Conditions:
+
+  withWebSocket: 
+    !Not [ !Or [ !Equals [ !Ref websocketCertificateARN, 'false'], !Equals [ !Ref websocketDomainName, 'false'] ] ]
+  witIpAddressAZ:
+    !Not [ !Equals [ !Ref ipAddressAZ, ''] ]
+Resources:
+
+  LoadBalancerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub "secg-${project}-${stage}-lb"
+      GroupDescription: !Sub "SG for LB ${project}-${stage}"
+      VpcId: !ImportValue mainVpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: !Ref loadBalancerPort
+          ToPort: !Ref loadBalancerPort
+          CidrIp: 10.0.0.0/8
+      Tags:
+        - Key: Name
+          Value: !Sub "secg-${project}-${stage}-lb"
+
+  ApiGatewayLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      LoadBalancerAttributes:
+        - Key: deletion_protection.enabled
+          Value: true
+        - Key: idle_timeout.timeout_seconds
+          Value: 60
+      Name: !Sub elb-${project}-${stage}
+      Scheme: "internal"
+      SecurityGroups:
+        - !Ref LoadBalancerSecurityGroup
+      Subnets:
+        - !ImportValue PrivateSubnet1EC2
+        - !ImportValue PrivateSubnet2EC2
+        - !ImportValue PrivateSubnet3EC2
+      Tags:
+        - Key: Name
+          Value: !Sub "elb-${project}-${stage}"
+
+  LoadBalancerListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    DependsOn:
+      - ApiGatewayLoadBalancer
+    Properties:
+      DefaultActions:
+        - FixedResponseConfig:
+            StatusCode: 403
+          Type: fixed-response
+      LoadBalancerArn: !Ref ApiGatewayLoadBalancer
+      Port: !Ref loadBalancerPort
+      Protocol: HTTPS
+      SslPolicy: ELBSecurityPolicy-TLS13-1-0-2021-06 # ELBSecurityPolicy-TLS13-1-2-2021-06
+      Certificates:
+        - CertificateArn: !Ref apiCertificateARN
+
+  ApiGatewayTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Condition: witIpAddressAZ
+    Properties:
+      HealthCheckIntervalSeconds: 300
+      HealthCheckPath: /
+      HealthCheckPort: traffic-port
+      HealthCheckProtocol: HTTPS
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 5
+      Matcher:
+        HttpCode: 200,403
+      IpAddressType: ipv4
+      Name: !Sub ${project}-${stage}-tg
+      Port: 443
+      Protocol: HTTPS
+      ProtocolVersion: HTTP1
+      Targets: # IPs VPC Endpoint
+        - AvailabilityZone: !ImportValue AZ1
+          Id: !Select [0, !Split ["|", !Ref ipAddressAZ]]
+          Port: 443
+        - AvailabilityZone: !ImportValue AZ2
+          Id: !Select [1, !Split ["|", !Ref ipAddressAZ]] 
+          Port: 443
+        - AvailabilityZone: !ImportValue AZ3
+          Id: !Select [2, !Split ["|", !Ref ipAddressAZ]] 
+          Port: 443
+      TargetType: ip
+      UnhealthyThresholdCount: 2
+      VpcId: !ImportValue mainVpcId
+
+  LoadBalancerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Condition: witIpAddressAZ
+    Properties:
+      Actions:
+        - TargetGroupArn: !Ref 'ApiGatewayTargetGroup'
+          Type: 'forward'
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - '/*'
+      ListenerArn: !Ref LoadBalancerListener
+      Priority: 1
+
+  ApiDomainName:
+    Type: AWS::ApiGateway::DomainName
+    Properties:
+      DomainName: !Ref apiDomainName
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+      RegionalCertificateArn: !Ref apiCertificateARN
+      SecurityPolicy: TLS_1_2
+  
+  WebSocketDomainName:
+    Type: AWS::ApiGateway::DomainName
+    Condition: withWebSocket
+    Properties:
+      DomainName: !Ref websocketDomainName
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+      RegionalCertificateArn: !Ref websocketCertificateARN
+      SecurityPolicy: TLS_1_2
+
+  VPCEndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "API GW VPC Endpoint Security Group"
+      GroupName: !Sub "secg-${project}-${stage}-apgw"
+      SecurityGroupEgress:
+        - CidrIp: "0.0.0.0/0"
+          Description: "Outbound rule"
+          IpProtocol: "-1"
+      SecurityGroupIngress:
+        - CidrIp: "0.0.0.0/0"
+          Description: "Inbound rule"
+          IpProtocol: "-1"
+      VpcId: !ImportValue mainVpcId
+
+  APIGatewayVpcEndpoint:
+    Type: "AWS::EC2::VPCEndpoint"
+    Properties:
+      SecurityGroupIds:
+        - !Ref VPCEndpointSecurityGroup
+      SubnetIds:
+        - !ImportValue PrivateSubnet1EC2
+        - !ImportValue PrivateSubnet2EC2
+        - !ImportValue PrivateSubnet3EC2
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.execute-api"
+      VpcId: !ImportValue mainVpcId
+      VpcEndpointType: "Interface"
+      PrivateDnsEnabled: false
+
+  DefaultLambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties: 
+      GroupDescription: "Lambda Security Group"
+      GroupName: !Sub "secg-${project}-${stage}-lmbd-default"
+      SecurityGroupEgress: 
+        - CidrIp: "0.0.0.0/0"
+          Description: "Outbound rule"
+          IpProtocol: "-1"
+      # SecurityGroupIngress: 
+      # - CidrIp: "0.0.0.0/0"
+        # Description: "Inbound rule"
+        # IpProtocol: "-1"
+      VpcId: !ImportValue mainVpcId
+
+  ApiKeySecret:
+    Type: AWS::SecretsManager::Secret
+    Properties: 
+      Description: Secreto que el api key
+      Name: !Sub scm-${project}-${stage}-ApiKeySecret
+      SecretString: '{ "API_KEY": "to_change"}'
+      Tags: 
+        - Key: Name
+          Value: !Sub scm-${project}-${stage}-ApiKeySecret
+
+  AudiencesRelationTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName:  BTG.tblAudiencesRelation
+      AttributeDefinitions:
+        - AttributeName: appid
+          AttributeType: S
+        - AttributeName: resourceid
+          AttributeType: S
+      KeySchema:
+        - AttributeName: appid
+          KeyType: HASH 
+        - AttributeName: resourceid
+          KeyType: RANGE
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      DeletionProtectionEnabled: true
+    
+  AudiencesUserTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName:  BTG.tblAudiencesUser
+      AttributeDefinitions:
+        - AttributeName: appid
+          AttributeType: S
+        - AttributeName: module
+          AttributeType: S
+      KeySchema:
+        - AttributeName: appid
+          KeyType: HASH 
+        - AttributeName: module
+          KeyType: RANGE
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      DeletionProtectionEnabled: true
+
+  ConnectionsTable:
+    Type: AWS::DynamoDB::Table
+    Condition: withWebSocket
+    Properties:
+      TableName: BTG.tblConnectionsWebSocket
+      AttributeDefinitions:
+        - AttributeName: connectionId
+          AttributeType: S
+        - AttributeName: action
+          AttributeType: S
+      KeySchema:
+        - AttributeName: connectionId
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+      GlobalSecondaryIndexes: 
+        - IndexName: indexAction
+          KeySchema: 
+            - AttributeName: action
+              KeyType: HASH
+            - AttributeName: connectionId
+              KeyType: RANGE
+          Projection: 
+            ProjectionType: ALL
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      DeletionProtectionEnabled: true
+
+Outputs:
+  LoadBalancerDNS:
+    Description: DNS Load Balancer
+    Value: !GetAtt ApiGatewayLoadBalancer.DNSName
+    Export:
+      Name: !Sub "${project}-LoadBalancerDNS"
+
+  LoadBalancerARN:
+    Description: Load Balancer ARN
+    Value: !Ref ApiGatewayLoadBalancer
+    Export:
+      Name: !Sub "${project}-LoadBalancerARN"
+  
+  ApiDomainName:
+    Description: Api DomainName
+    Value: !Ref ApiDomainName
+    Export:
+      Name: !Sub "${project}-ApiDomainName"
+  
+  WebSocketDomainName:
+    Condition: withWebSocket
+    Description: Websocket DomainName
+    Value: !Ref WebSocketDomainName
+    Export:
+      Name: !Sub "${project}-WebsocketDomainName"
+
+  APIGatewayVpcEndpointID:
+    Description: VpcEndpoint ID
+    Value: !Ref APIGatewayVpcEndpoint
+    Export:
+      Name: !Sub "${project}-APIGatewayVpcEndpointID"
+
+  DefaultLambdaSecurityGroupID:
+    Description: Default Lambda Security Group Id
+    Value: !GetAtt DefaultLambdaSecurityGroup.GroupId
+    Export:
+      Name: !Sub "${project}-DefaultLambdaSecurityGroupID"
+  
+  ApiKeySecretARN:
+    Description: ApiKeySecret ARN
+    Value: !Ref ApiKeySecret
+    Export:
+      Name: !Sub "${project}-ApiKeySecretARN"
+  
+  AudiencesRelationTableARN:
+    Description: AudiencesRelationTable ARN
+    Value: !GetAtt AudiencesRelationTable.Arn
+    Export:
+      Name: !Sub "${project}-AudiencesRelationTableARN"
+  
+  AudiencesRelationTableName:
+    Description: AudiencesRelationTable Name
+    Value: !Ref AudiencesRelationTable
+    Export:
+      Name: !Sub "${project}-AudiencesRelationTableName"
+
+  AudiencesUserTableARN:
+    Description: AudiencesUserTable ARN
+    Value: !GetAtt AudiencesUserTable.Arn
+    Export:
+      Name: !Sub "${project}-AudiencesUserTableARN"
+  
+  AudiencesUserTableName:
+    Description: AudiencesUserTable Name
+    Value: !Ref AudiencesUserTable
+    Export:
+      Name: !Sub "${project}-AudiencesUserTableName"
+  
+  ConnectionsTableARN:
+    Condition: withWebSocket
+    Description: ConnectionsTable ARN
+    Value: !GetAtt ConnectionsTable.Arn
+    Export:
+      Name: !Sub "${project}-ConnectionsTableARN"
+  
+  ConnectionsTableName:
+    Condition: withWebSocket
+    Description: ConnectionsTable Name
+    Value: !Ref ConnectionsTable
+    Export:
+      Name: !Sub "${project}-ConnectionsTableName"

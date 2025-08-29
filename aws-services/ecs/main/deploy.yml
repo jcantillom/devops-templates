@@ -1,0 +1,125 @@
+AWSTemplateFormatVersion: 2010-09-09 
+Description: Deploy a complete ECS + Fargate solution.
+Parameters:
+  # Generic parameters
+  stage:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - pdn
+      - uat
+      - qa
+      - dev
+  project:
+    Type: String
+  cfBucketName:
+    Type: String
+  loadBalancerPort:
+    Type: Number
+    Default: 80
+  loadBalancerCertificate:
+    Type: String
+  publicLB:
+    Type: String
+    Default: false
+    AllowedValues:
+      - true
+      - false
+
+Conditions:
+  isProduction: !Equals 
+    - !Ref stage
+    - pdn
+
+Resources:
+
+  ECSCluster:
+    Type: AWS::CloudFormation::Stack
+    Properties: 
+      TemplateURL: !Sub https://s3.amazonaws.com/${cfBucketName}/${project}/ecs/main/cluster/deploy.yml
+      Parameters: 
+        stage : !Ref stage
+        project: !Ref project
+
+  DNSNamespace:
+    Type: AWS::CloudFormation::Stack
+    Properties: 
+      TemplateURL: !Sub https://s3.amazonaws.com/${cfBucketName}/${project}/ecs/main/dns-namespace/deploy.yml
+      Parameters: 
+        stage : !Ref stage
+        project: !Ref project
+
+  LoadBalancer:
+    Type: AWS::CloudFormation::Stack
+    Properties: 
+      TemplateURL: !Sub https://s3.amazonaws.com/${cfBucketName}/${project}/ecs/main/loadbalancer/deploy.yml
+      Parameters: 
+        stage : !Ref stage
+        project: !Ref project
+        loadBalancerPort: !Ref loadBalancerPort
+        publicLB: !Ref publicLB
+        loadBalancerCertificate: !Ref loadBalancerCertificate
+
+Outputs:
+  ClusterName:
+    Description: Cluster Name
+    Value: !GetAtt ECSCluster.Outputs.ClusterName
+    Export:
+      Name: !Sub '${project}-ClusterName'
+  ClusterARN:
+    Description: Cluster ARN
+    Value: !GetAtt ECSCluster.Outputs.ClusterARN
+    Export:
+      Name: !Sub '${project}-ClusterARN'
+  ContainerInternalSecurityGroupId:
+    Description: Auto Scaling Role ARN
+    Value: !GetAtt ECSCluster.Outputs.ContainerInternalSecurityGroupId
+    Export:
+      Name: !Sub '${project}-ContainerInternalSecurityGroupId'
+  AutoScalingRoleName:
+    Description: Auto Scaling Role Name
+    Value: !GetAtt ECSCluster.Outputs.AutoScalingRoleName
+    Export:
+      Name: !Sub '${project}-AutoScalingRoleName'
+  AutoScalingRoleARN:
+    Description: Auto Scaling Role ARN
+    Value: !GetAtt ECSCluster.Outputs.AutoScalingRoleARN
+    Export:
+      Name: !Sub '${project}-AutoScalingRoleARN'
+  ExecutionRoleARN:
+    Description: Auto Scaling Role ARN
+    Value: !GetAtt ECSCluster.Outputs.ExecutionRoleARN
+    Export:
+      Name: !Sub '${project}-ExecutionRoleARN'
+  
+  Namespace:
+    Description: Namespace
+    Value: !GetAtt DNSNamespace.Outputs.Namespace
+    Export:
+      Name: !Sub '${project}-Namespace'
+  NamespaceId:
+    Description: Namespace Id
+    Value: !GetAtt DNSNamespace.Outputs.NamespaceId
+    Export:
+      Name: !Sub '${project}-NamespaceId'
+  NamespaceARN:
+    Description: Namespace ARN
+    Value: !GetAtt DNSNamespace.Outputs.NamespaceARN
+    Export:
+      Name: !Sub '${project}-NamespaceARN'
+  
+  Endpoint:
+    Description: Endpoint
+    Value: !GetAtt LoadBalancer.Outputs.LoadBalancerEndpoint
+    Export:
+      Name: !Sub '${project}-Endpoint'
+  loadBalancerSecurityGroupId:
+    Description: Load balancer security group Id
+    Value: !GetAtt LoadBalancer.Outputs.LoadBalancerSecurityGroupId
+    Export:
+      Name: !Sub '${project}-loadBalancerSecurityGroupId'
+  loadBalancerListenerARN:
+    Description: Load balancer security group Id
+    Value: !GetAtt LoadBalancer.Outputs.LoadBalancerListenerARN
+    Export:
+      Name: !Sub '${project}-loadBalancerListenerARN'

@@ -1,0 +1,43 @@
+parameters:
+  - name: code
+    type: string
+
+  - name: deploy
+    type: string
+  
+  - name: enable_apigw
+    type: boolean
+    default: false
+
+variables:
+  - template: vars/vars.yml
+  - group: ${{ format('{0}-{1}', variables['Build.DefinitionName'], variables['env']) }}
+
+stages:
+  - stage: VerifyVariables
+    displayName: "Verificar Variables de Entorno"
+    jobs:
+      - job: PrintVariables
+        displayName: "Mostrar Variables de Entorno"
+        pool:
+          name: 'BTG Colombia - Azure DevOps'
+        steps:
+          - script: |
+              echo "==> Verificación de Variables de Entorno Inicial"
+              echo "Build.SourceBranch: $(Build.SourceBranch)"
+              echo "Build.DefinitionName: $(Build.DefinitionName)"
+              echo "aws_svc: $(AWS_SVC)"
+              echo "funcionalidad: $(FUNCIONALIDAD)"
+              echo "idCuenta: $(ID_CUENTA)"
+              echo "Deploy: ${{ parameters.deploy }}"
+              echo "Technology: ${{ parameters.code }}"
+              echo "Vgrupo de Variables: ${{ format('{0}-{1}', variables['Build.DefinitionName'], variables['env']) }}"
+            displayName: "Mostrar Variables de Entorno"
+
+  # == Condicionales para Builds y Despliegues ==
+  - ${{ if eq(parameters.deploy, 'lambdas') }}:
+      - template: ci/${{ parameters.deploy }}/${{ parameters.code }}/build.yml
+        parameters:
+          aws_svc: $(AWS_SVC)
+          idCuenta: $(ID_CUENTA)
+          enable_apigw: ${{ parameters.enable_apigw }}
